@@ -1,45 +1,55 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { lensRequest } from "@/lib/lens";
 
 export async function POST(req: Request) {
   try {
-    const { address, signature } = await req.json();
+    const { challengeId, signature } = await req.json();
 
     const query = `
-      mutation Authenticate($request: AuthenticateRequest!) {
+      mutation Authenticate($request: SignedAuthChallenge!) {
         authenticate(request: $request) {
-          accessToken
-          refreshToken
+          ... on AuthenticationTokens {
+            accessToken
+            refreshToken
+          }
         }
       }
     `;
 
     const data = await lensRequest(query, {
-      request: {
-        onboardingUser: {
-          wallet: address,
-        },
-        signature,
-      },
+    request: {
+        id: challengeId,
+        signature: signature.signature, 
+    },
     });
 
-    const { accessToken, refreshToken } = data.authenticate;
 
-    const response = NextResponse.json({ success: true });
+    const tokens = data.authenticate;
+    console.log("Incoming signature:", signature);
 
-    response.cookies.set("lensAccessToken", accessToken, {
+
+    if (!tokens?.accessToken) {
+      throw new Error("Authentication failed");
+    }
+
+    const cookieStore = cookies();
+
+    cookieStore.set("lensAccessToken", tokens.accessToken, {
       httpOnly: true,
+      sameSite: "lax",
       secure: false,
       path: "/",
     });
 
-    response.cookies.set("lensRefreshToken", refreshToken, {
+    cookieStore.set("lensRefreshToken", tokens.refreshToken, {
       httpOnly: true,
+      sameSite: "lax",
       secure: false,
       path: "/",
     });
 
-    return response;
+    return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error("Lens authenticate error:", error.message);
     return NextResponse.json(

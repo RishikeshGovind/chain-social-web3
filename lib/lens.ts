@@ -16,7 +16,6 @@ export async function lensRequest(
     {
       headers: {
         "Content-Type": "application/json",
-        "Origin": "http://localhost:3000",
         ...(accessToken && {
           Authorization: `Bearer ${accessToken}`,
         }),
