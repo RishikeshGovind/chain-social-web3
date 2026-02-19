@@ -1,6 +1,7 @@
+
 import axios from "axios";
 
-const LENS_API = "https://api.lens.xyz/graphql";
+const LENS_API = "https://api.lens.dev/";
 
 export async function lensRequest(
   query: string,

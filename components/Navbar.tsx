@@ -9,39 +9,67 @@ export default function Navbar() {
 
   const walletAddress = user?.wallet?.address;
 
+  console.log("Wallet Address:", walletAddress);
+
   const handleLensAuth = async () => {
-    if (!walletAddress) return;
+    if (!walletAddress) {
+      alert("Wallet not ready yet");
+      return;
+    }
 
     setLoading(true);
 
     try {
       // 1️⃣ Get challenge
-      const challengeRes = await fetch("/api/lens/auth", {
+      const challengeRes = await fetch("/api/lens/challenge", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ address: walletAddress }),
       });
 
-      const { challenge } = await challengeRes.json();
+      const challengeData = await challengeRes.json();
 
-      console.log("Lens Challenge:", challenge);
+      if (!challengeRes.ok) {
+        throw new Error(challengeData.error || "Challenge failed");
+      }
 
-      // 2️⃣ Sign with Privy wallet
-      const signature = await signMessage({ message: challenge });
+      const { id, text } = challengeData;
 
-      console.log("Signature:", signature);
+      if (!text) {
+        throw new Error("Challenge text missing");
+      }
+
+      // 2️⃣ Sign challenge text
+      const signature = await signMessage({
+        message: text,
+      });
 
       // 3️⃣ Authenticate
-      await fetch("/api/lens/authenticate", {
+      const authRes = await fetch("/api/lens/authenticate", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
+          id,
           address: walletAddress,
           signature,
         }),
       });
 
+      const result = await authRes.json();
+
+      if (!authRes.ok) {
+        throw new Error(result.error || "Authentication failed");
+      }
+
       alert("Lens authenticated successfully 🚀");
+
     } catch (err) {
       console.error(err);
+      alert("Lens authentication failed ❌");
     }
 
     setLoading(false);
