@@ -3,10 +3,10 @@ import { lensRequest } from "@/lib/lens";
 
 export async function POST(req: Request) {
   try {
-    const { address, signature } = await req.json();
+    const { id, signature } = await req.json();
 
-    const query = `
-      mutation Authenticate($request: AuthenticateRequest!) {
+    const authMutation = `
+      mutation Authenticate($request: SignedAuthChallenge!) {
         authenticate(request: $request) {
           accessToken
           refreshToken
@@ -14,16 +14,14 @@ export async function POST(req: Request) {
       }
     `;
 
-    const data = await lensRequest(query, {
+    const authData = await lensRequest(authMutation, {
       request: {
-        onboardingUser: {
-          wallet: address,
-        },
+        id,
         signature,
       },
     });
 
-    const { accessToken, refreshToken } = data.authenticate;
+    const { accessToken, refreshToken } = authData.authenticate;
 
     const response = NextResponse.json({ success: true });
 
