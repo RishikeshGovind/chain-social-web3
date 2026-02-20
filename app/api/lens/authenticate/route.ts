@@ -1,9 +1,19 @@
 import { NextResponse } from "next/server";
 import { lensRequest } from "@/lib/lens";
 
+type AuthenticateResponse = {
+  authenticate: {
+    accessToken: string;
+    refreshToken: string;
+  };
+};
+
 export async function POST(req: Request) {
   try {
     const { id, signature } = await req.json();
+    if (typeof id !== "string" || typeof signature !== "string") {
+      return NextResponse.json({ error: "Invalid authentication payload" }, { status: 400 });
+    }
 
     const authMutation = `
       mutation Authenticate($request: SignedAuthChallenge!) {
@@ -14,7 +24,7 @@ export async function POST(req: Request) {
       }
     `;
 
-    const authData = await lensRequest(authMutation, {
+    const authData = await lensRequest<AuthenticateResponse>(authMutation, {
       request: {
         id,
         signature,
@@ -24,24 +34,30 @@ export async function POST(req: Request) {
     const { accessToken, refreshToken } = authData.authenticate;
 
     const response = NextResponse.json({ success: true });
+    const secure = process.env.NODE_ENV === "production";
 
     response.cookies.set("lensAccessToken", accessToken, {
       httpOnly: true,
-      secure: false,
+      secure,
+      sameSite: "lax",
       path: "/",
+      maxAge: 60 * 60,
     });
 
     response.cookies.set("lensRefreshToken", refreshToken, {
       httpOnly: true,
-      secure: false,
+      secure,
+      sameSite: "lax",
       path: "/",
+      maxAge: 60 * 60 * 24 * 30,
     });
 
     return response;
-  } catch (error: any) {
-    console.error("Lens authenticate error:", error.message);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Lens authenticate error";
+    console.error("Lens authenticate error:", message);
     return NextResponse.json(
-      { error: error.message },
+      { error: message },
       { status: 500 }
     );
   }

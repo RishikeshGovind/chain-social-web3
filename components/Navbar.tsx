@@ -2,6 +2,7 @@
 
 import { usePrivy } from "@privy-io/react-auth";
 import { useState } from "react";
+import Link from "next/link";
 
 export default function Navbar() {
   const { login, logout, authenticated, user, signMessage } = usePrivy();
@@ -80,6 +81,22 @@ export default function Navbar() {
       <h1 className="text-xl font-bold">ChainSocial</h1>
 
       <div className="flex items-center gap-4">
+        {authenticated && user?.wallet?.address && (
+          <>
+            <Link
+              href={`/profile/${user.wallet.address}`}
+              className="text-sm text-blue-400 hover:underline"
+            >
+              My Profile
+            </Link>
+            <Link
+              href="/profile/edit"
+              className="text-sm text-blue-400 hover:underline"
+            >
+              Edit Profile
+            </Link>
+          </>
+        )}
         {!authenticated ? (
           <button
             onClick={login}

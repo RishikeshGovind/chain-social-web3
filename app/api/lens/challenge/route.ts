@@ -1,9 +1,19 @@
 import { NextResponse } from "next/server";
 import { lensRequest } from "@/lib/lens";
 
+type ChallengeResponse = {
+  challenge: {
+    id: string;
+    text: string;
+  };
+};
+
 export async function POST(req: Request) {
   try {
     const { address } = await req.json();
+    if (typeof address !== "string") {
+      return NextResponse.json({ error: "Invalid address payload" }, { status: 400 });
+    }
 
     const challengeQuery = `
       mutation Challenge($request: ChallengeRequest!) {
@@ -14,7 +24,7 @@ export async function POST(req: Request) {
       }
     `;
 
-    const data = await lensRequest(challengeQuery, {
+    const data = await lensRequest<ChallengeResponse>(challengeQuery, {
       request: {
         accountOwner: {
           app: process.env.LENS_APP_ADDRESS,
@@ -25,10 +35,11 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(data.challenge);
-  } catch (error: any) {
-    console.error("Lens challenge error:", error.message);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Lens challenge error";
+    console.error("Lens challenge error:", message);
     return NextResponse.json(
-      { error: error.message },
+      { error: message },
       { status: 500 }
     );
   }
