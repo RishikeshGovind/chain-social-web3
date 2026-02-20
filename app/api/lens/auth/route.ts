@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import { lensRequest } from "@/lib/lens";
 
+type AuthChallengeResponse = {
+  challenge: {
+    text: string;
+  };
+};
+
 export async function POST(req: Request) {
   try {
     const { address } = await req.json();
 
-    if (!address) {
+    if (typeof address !== "string" || !address) {
       return NextResponse.json(
         { error: "Wallet address required" },
         { status: 400 }
@@ -20,7 +26,7 @@ export async function POST(req: Request) {
       }
     `;
 
-    const data = await lensRequest(query, {
+    const data = await lensRequest<AuthChallengeResponse>(query, {
       request: {
         onboardingUser: {
           wallet: address
@@ -33,10 +39,11 @@ export async function POST(req: Request) {
     return NextResponse.json({
       challenge: data.challenge.text,
     });
-  } catch (error: any) {
-    console.error("Lens auth error:", error.message);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Lens auth error";
+    console.error("Lens auth error:", message);
     return NextResponse.json(
-      { error: error.message },
+      { error: message },
       { status: 500 }
     );
   }

@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ChainSocial
 
-## Getting Started
+ChainSocial is a Next.js app for experimenting with a web3 social feed.
 
-First, run the development server:
+## Setup
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. Install dependencies: `npm install`
+2. Create `.env.local` with:
+   - `NEXT_PUBLIC_PRIVY_APP_ID=<your_privy_app_id>`
+   - `LENS_APP_ADDRESS=<your_lens_app_address>`
+3. Start dev server: `npm run dev`
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## User Posting (Current Branch)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+This branch focuses on local user posting and engagement, while keeping Lens auth for identity.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### API endpoints
 
-## Learn More
+- `GET /api/posts?limit=10&cursor=<cursor>&author=<wallet>`: cursor-based feed pagination.
+- `POST /api/posts`: create a post (requires `lensAccessToken` cookie).
+- `PATCH /api/posts/:id/likes`: like/unlike a post (requires auth).
+- `GET /api/posts/:id/replies?limit=20&cursor=<cursor>`: paginated replies for a post.
+- `POST /api/posts/:id/replies`: publish a reply.
+- `PATCH /api/posts/:id`: edit your own post.
+- `DELETE /api/posts/:id`: delete your own post.
+- `GET /api/follows/:address`: follower/following counts + viewer follow state.
+- `PATCH /api/follows/:address/toggle`: follow or unfollow a profile.
 
-To learn more about Next.js, take a look at the following resources:
+Legacy compatibility route remains available at `app/api/lens/create-post/route.ts`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Safeguards in place
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Server-side actor derivation from Lens auth cookie.
+- Content sanitization and 280-char cap.
+- Address normalization/validation.
+- Per-wallet posting cooldown and minute-level rate cap.
+- File-backed persistence at `data/posts.json`.
+- Ownership checks for post edit/delete.
+- Threaded replies with reply counts.
+- Follow graph state and profile follow controls.
 
-## Deploy on Vercel
+## Useful commands
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `npm run lint`
+- `npx tsc --noEmit`
+- `npm run test:posting`

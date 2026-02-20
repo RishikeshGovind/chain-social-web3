@@ -1,9 +1,18 @@
 import { NextResponse } from "next/server";
 import { lensRequest } from "@/lib/lens";
 
+type AccountsResponse = {
+  accountsAvailable: {
+    items: unknown[];
+  };
+};
+
 export async function POST(req: Request) {
   try {
     const { wallet } = await req.json();
+    if (typeof wallet !== "string") {
+      return NextResponse.json({ error: "Invalid wallet payload" }, { status: 400 });
+    }
 
     const query = `
       query Accounts($request: AccountsAvailableRequest!) {
@@ -31,15 +40,16 @@ export async function POST(req: Request) {
       }
     `;
 
-    const data = await lensRequest(query, {
+    const data = await lensRequest<AccountsResponse>(query, {
       request: {
         managedBy: wallet
       }
     });
 
     return NextResponse.json(data.accountsAvailable.items);
-  } catch (error: any) {
-    console.error(error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to fetch accounts";
+    console.error(message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
