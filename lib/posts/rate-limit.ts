@@ -1,3 +1,5 @@
+//lib/posts/rate-limit.ts
+
 const POST_COOLDOWN_MS = 10_000;
 const POSTS_PER_MINUTE = 12;
 

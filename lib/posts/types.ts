@@ -1,3 +1,5 @@
+//lib/posts/types.ts
+
 export type Username = {
   localName?: string;
 };

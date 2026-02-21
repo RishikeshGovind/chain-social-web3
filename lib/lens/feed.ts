@@ -1,3 +1,5 @@
+//lib/lens/feed.ts
+
 import { lensRequest } from "@/lib/lens";
 import { normalizeAddress } from "@/lib/posts/content";
 import type { Post } from "@/lib/posts/types";
@@ -8,6 +10,7 @@ type LensFetchInput = {
   author?: string;
   debug?: boolean;
   accessToken?: string;
+  postId?: string;
 };
 
 type LensFeedOutput = {
@@ -168,7 +171,7 @@ async function fetchMetadataContent(uri: string): Promise<string> {
     const content = readContent(text);
     metadataContentCache.set(uri, content);
     return content;
-  } catch {
+  } catch (error) {
     metadataContentCache.set(uri, "");
     return "";
   }
@@ -181,43 +184,43 @@ async function mapNodeToPost(
   const object = asObject(node);
   if (!object) return null;
 
-  const id = asString(object.id) ?? asString(object.slug);
+  const id = asString(object.id);
   if (!id) return null;
 
-  const createdAt = asString(object.timestamp) ?? asString(object.createdAt) ?? new Date().toISOString();
+  const createdAt =
+    asString(object.timestamp) ??
+    asString(object.createdAt) ??
+    new Date().toISOString();
 
-  const authorObj = asObject(object.author) ?? asObject(object.by);
-  const address =
-    asString(authorObj?.address) ??
-    asString(asObject(authorObj?.ownedBy)?.address) ??
-    asString(authorObj?.ownedBy) ??
-    "";
-
+  const authorObj = asObject(object.author);
+  const address = asString(authorObj?.address);
   if (!address) return null;
 
   const usernameObj = asObject(authorObj?.username);
-  const localName = asString(usernameObj?.localName) ?? asString(authorObj?.handle) ?? undefined;
+  const localName = asString(usernameObj?.localName);
 
-  let content =
-    asString(object.content) ??
-    asString(object.body) ??
-    asString(object.description) ??
-    readContent(object.metadata);
-  if (!content) {
-    const metadataUri =
-      extractMetadataUri(object.metadata) ??
-      extractMetadataUri(object.metadataUri) ??
-      extractMetadataUri(object.contentUri);
-    if (metadataUri) {
-      content = await fetchMetadataContent(metadataUri);
-    }
+  // Try contentUri, then metadataUri, then direct fields
+  const contentUri = asString(object.contentUri);
+  const metadataUri = asString(object.metadataUri);
+  let content = "";
+
+  if (contentUri) {
+    const normalized = normalizeMetadataUri(contentUri);
+    content = await fetchMetadataContent(normalized);
+  } else if (metadataUri) {
+    const normalized = normalizeMetadataUri(metadataUri);
+    content = await fetchMetadataContent(normalized);
+  } else {
+    // Fallback to direct fields if URIs are missing
+    const contentField = asString(object.content);
+    const bodyField = asString(object.body);
+    const metadataField = readContent(object.metadata);
+    content = contentField || bodyField || metadataField || "";
   }
 
   const statsObj = asObject(object.stats) ?? {};
-  const likesCount =
-    Number(statsObj.upvotes ?? statsObj.reactions ?? statsObj.likes ?? statsObj.collects ?? 0) || 0;
   const repliesCount =
-    Number(statsObj.comments ?? statsObj.replies ?? statsObj.replyCount ?? 0) || 0;
+    Number(statsObj.comments ?? 0) || 0;
 
   const post: Post = {
     id,
@@ -227,18 +230,17 @@ async function mapNodeToPost(
       address: normalizeAddress(address),
       ...(localName ? { username: { localName } } : {}),
     },
-    likes: Array.from({ length: Math.max(0, likesCount) }, () => ""),
-    replyCount: Math.max(0, repliesCount),
+    likes: [],
+    replyCount: repliesCount,
   };
 
+  // ...existing code...
   return {
     post,
     ...(debug
       ? {
           rawMetadata: {
             typename: object.__typename ?? null,
-            metadata: object.metadata ?? null,
-            metadataUri: object.metadataUri ?? null,
             contentUri: object.contentUri ?? null,
           },
         }
@@ -302,7 +304,26 @@ const QUERY_VARIANTS = [
               timestamp
               content
               body
-              metadata
+              metadata {
+                ... on TextOnlyMetadata {
+                  content
+                }
+                ... on ArticleMetadata {
+                  content
+                }
+                ... on ImageMetadata {
+                  content
+                }
+                ... on VideoMetadata {
+                  content
+                }
+                ... on EmbedMetadata {
+                  content
+                }
+                ... on LinkMetadata {
+                  content
+                }
+              }
               metadataUri
               contentUri
               author {
@@ -337,7 +358,26 @@ const QUERY_VARIANTS = [
             ... on Post {
               id
               timestamp
-              metadata
+              metadata {
+                ... on TextOnlyMetadata {
+                  content
+                }
+                ... on ArticleMetadata {
+                  content
+                }
+                ... on ImageMetadata {
+                  content
+                }
+                ... on VideoMetadata {
+                  content
+                }
+                ... on EmbedMetadata {
+                  content
+                }
+                ... on LinkMetadata {
+                  content
+                }
+              }
               metadataUri
               contentUri
               author {
@@ -372,7 +412,11 @@ const QUERY_VARIANTS = [
             ... on Post {
               id
               timestamp
-              metadata
+              metadata {
+                ... on TextOnlyMetadata {
+                  content
+                }
+              }
               author {
                 address
                 username {
@@ -436,8 +480,11 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
 
   for (const variant of QUERY_VARIANTS) {
     try {
+      console.log("[Lens] Attempting query with variant...");
       const data = await lensRequest(variant.query, variant.variables(input), input.accessToken);
+      console.log("[Lens] Query successful, extracting posts...", data);
       const extracted = await extractPosts(data, input.debug);
+      console.log("[Lens] Extracted posts:", extracted.items.length, "items");
       const filteredItems = normalizedAuthor
         ? extracted.items.filter((post) => post.author.address === normalizedAuthor)
         : extracted.items;
@@ -447,9 +494,12 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
         ...(input.debug ? { debugMetadata: extracted.debugMetadata } : {}),
       };
     } catch (error) {
-      errors.push(error instanceof Error ? error.message : "Lens query failed");
+      const msg = error instanceof Error ? error.message : "Lens query failed";
+      console.warn("[Lens] Query failed:", msg);
+      errors.push(msg);
     }
   }
 
+  console.error("[Lens] All query variants failed:", errors);
   throw new Error(errors.join(" | "));
 }

@@ -1,3 +1,5 @@
+//app/api/lens/authenticate/route.ts
+
 import { NextResponse } from "next/server";
 import { lensRequest } from "@/lib/lens";
 

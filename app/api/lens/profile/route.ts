@@ -1,3 +1,5 @@
+// app/api/lens/profile/route.ts
+
 import { NextResponse } from "next/server";
 import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
 import { normalizeAddress } from "@/lib/posts/content";

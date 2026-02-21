@@ -1,3 +1,5 @@
+//lib/server/auth/lens-actor.ts
+
 import { cookies } from "next/headers";
 import { normalizeAddress } from "@/lib/posts/content";
 

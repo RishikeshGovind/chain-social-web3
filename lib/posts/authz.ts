@@ -1,3 +1,5 @@
+//lib/posts/authz.ts
+
 import { normalizeAddress } from "./content";
 
 export function canMutateOwnedResource(actorAddress: string, ownerAddress: string) {

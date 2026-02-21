@@ -1,3 +1,5 @@
+//lib/lens/writes.ts
+
 import { lensRequest } from "@/lib/lens";
 import { normalizeAddress } from "@/lib/posts/content";
 import type { Post, Reply } from "@/lib/posts/types";
@@ -57,20 +59,6 @@ export async function createLensPost(params: {
       {
         query: `
           mutation Post($request: CreatePostRequest!) {
-            post(request: $request) {
-              id
-            }
-          }
-        `,
-        variables: {
-          request: {
-            content: params.content,
-          },
-        },
-      },
-      {
-        query: `
-          mutation CreatePost($request: CreateMomokaPostRequest!) {
             post(request: $request) {
               id
             }

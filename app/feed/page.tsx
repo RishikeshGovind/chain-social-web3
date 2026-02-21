@@ -40,6 +40,8 @@ type FeedResponse = {
   posts?: Post[];
   nextCursor?: string | null;
   error?: string;
+  source?: "lens" | "local";
+  lensFallbackError?: string;
 };
 
 const PAGE_SIZE = 10;
@@ -115,6 +117,11 @@ export default function FeedPage() {
       setPosts((prev) => (reset ? incomingPosts : [...prev, ...incomingPosts]));
       setNextCursor(data.nextCursor ?? null);
       setFeedStatus("ready");
+      
+      // Show Lens fallback warning if we fell back to local store
+      if (data.source === "local" && data.lensFallbackError) {
+        console.warn("Using local store instead of Lens. Error:", data.lensFallbackError);
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to load feed";
       setError(message);

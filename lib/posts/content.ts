@@ -1,3 +1,5 @@
+//lib/posts/content.ts
+
 export const MAX_POST_LENGTH = 280;
 
 export function normalizeAddress(address: string) {

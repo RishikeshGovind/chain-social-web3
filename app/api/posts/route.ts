@@ -19,6 +19,7 @@ export async function GET(req: Request) {
     const limit = Number.parseInt(searchParams.get("limit") ?? "10", 10);
     const cursor = searchParams.get("cursor") ?? undefined;
     const author = searchParams.get("author") ?? undefined;
+    const postId = searchParams.get("postId") ?? undefined;
     const debug = searchParams.get("debug") === "1";
     const debugSchema = searchParams.get("debugSchema") === "1";
 
@@ -67,6 +68,24 @@ export async function GET(req: Request) {
                   }
                 }
               }
+              postMetadataUnion: __type(name: "PostMetadata") {
+                name
+                kind
+                possibleTypes {
+                  name
+                }
+              }
+              postMetadataTypes: __type(name: "PostMetadataV3") {
+                name
+                fields {
+                  name
+                  type {
+                    kind
+                    name
+                    ofType { kind name }
+                  }
+                }
+              }
             }
           `;
           const schemaData = await lensRequest(schemaQuery, undefined, accessToken ?? undefined);
@@ -77,6 +96,7 @@ export async function GET(req: Request) {
           limit: boundedLimit,
           cursor,
           author,
+          postId,
           debug,
           accessToken: accessToken ?? undefined,
         });
