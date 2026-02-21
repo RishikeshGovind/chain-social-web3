@@ -8,11 +8,23 @@ ChainSocial is a Next.js app for experimenting with a web3 social feed.
 2. Create `.env.local` with:
    - `NEXT_PUBLIC_PRIVY_APP_ID=<your_privy_app_id>`
    - `LENS_APP_ADDRESS=<your_lens_app_address>`
+   - `LENS_POSTS_SOURCE=local` (or `lens` to pull feed data from Lens API)
+   - `LENS_API_URL=https://api.lens.xyz/graphql` (recommended explicit Lens endpoint)
 3. Start dev server: `npm run dev`
 
 ## User Posting (Current Branch)
 
 This branch focuses on local user posting and engagement, while keeping Lens auth for identity.
+
+When `LENS_POSTS_SOURCE=lens`, the backend will attempt Lens first for:
+- feed reads (`GET /api/posts`)
+- post writes (`POST /api/posts`)
+- reactions (`PATCH /api/posts/:id/likes`)
+- replies (`POST /api/posts/:id/replies`)
+- follows (`PATCH /api/follows/:address/toggle`)
+- edit/delete (`PATCH|DELETE /api/posts/:id`)
+
+If Lens queries or mutations fail, routes automatically fall back to local store responses where possible.
 
 ### API endpoints
 

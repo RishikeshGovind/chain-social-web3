@@ -100,6 +100,8 @@ export default function UserProfilePage({ params }: { params: { address: string 
     try {
       const res = await fetch(`/api/follows/${params.address}/toggle`, {
         method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentlyFollowing: prev.isFollowing }),
       });
       const data = await res.json();
       if (!res.ok) {

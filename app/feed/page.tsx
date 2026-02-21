@@ -40,6 +40,8 @@ type FeedResponse = {
   posts?: Post[];
   nextCursor?: string | null;
   error?: string;
+  source?: "lens" | "local";
+  lensFallbackError?: string;
 };
 
 const PAGE_SIZE = 10;
@@ -115,6 +117,11 @@ export default function FeedPage() {
       setPosts((prev) => (reset ? incomingPosts : [...prev, ...incomingPosts]));
       setNextCursor(data.nextCursor ?? null);
       setFeedStatus("ready");
+      
+      // Show Lens fallback warning if we fell back to local store
+      if (data.source === "local" && data.lensFallbackError) {
+        console.warn("Using local store instead of Lens. Error:", data.lensFallbackError);
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to load feed";
       setError(message);
@@ -182,6 +189,8 @@ export default function FeedPage() {
     if (!viewerAddress) return;
 
     setError(null);
+    const currentlyLiked =
+      posts.find((post) => post.id === postId)?.likes?.includes(viewerAddress) ?? false;
 
     setPosts((prev) =>
       prev.map((post) => {
@@ -200,13 +209,17 @@ export default function FeedPage() {
     try {
       const res = await fetch(`/api/posts/${postId}/likes`, {
         method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentlyLiked }),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || "Failed to update like");
       }
 
-      setPosts((prev) => prev.map((post) => (post.id === postId ? data.post : post)));
+      if (data.post) {
+        setPosts((prev) => prev.map((post) => (post.id === postId ? data.post : post)));
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to update like";
       setError(message);
@@ -302,7 +315,17 @@ export default function FeedPage() {
         throw new Error(data.error || "Failed to edit post");
       }
 
-      setPosts((prev) => prev.map((post) => (post.id === postId ? data.post : post)));
+      if (data.post) {
+        setPosts((prev) => prev.map((post) => (post.id === postId ? data.post : post)));
+      } else {
+        setPosts((prev) =>
+          prev.map((post) =>
+            post.id === postId
+              ? { ...post, metadata: { content } }
+              : post
+          )
+        );
+      }
       setEditingPostId(null);
       setEditingContent("");
     } catch (e) {

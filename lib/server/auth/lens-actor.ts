@@ -1,3 +1,5 @@
+//lib/server/auth/lens-actor.ts
+
 import { cookies } from "next/headers";
 import { normalizeAddress } from "@/lib/posts/content";
 
@@ -46,4 +48,9 @@ export async function getActorAddressFromLensCookie() {
   if (!payload) return null;
 
   return findAddress(payload);
+}
+
+export async function getLensAccessTokenFromCookie() {
+  const cookieStore = await cookies();
+  return cookieStore.get("lensAccessToken")?.value ?? null;
 }

@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { isValidAddress, normalizeAddress } from "@/lib/posts/content";
 import { toggleFollow } from "@/lib/posts/store";
-import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
+import { toggleLensFollow } from "@/lib/lens/writes";
+import {
+  getActorAddressFromLensCookie,
+  getLensAccessTokenFromCookie,
+} from "@/lib/server/auth/lens-actor";
 
 export async function PATCH(
-  _req: Request,
+  req: Request,
   context: { params: { address: string } }
 ) {
   try {
@@ -21,6 +25,38 @@ export async function PATCH(
       return NextResponse.json({ error: "Invalid address" }, { status: 400 });
     }
 
+    const body = await req.json().catch(() => ({}));
+    const currentlyFollowing =
+      typeof body?.currentlyFollowing === "boolean" ? body.currentlyFollowing : false;
+
+    const useLensData =
+      process.env.LENS_POSTS_SOURCE === "lens" ||
+      process.env.NEXT_PUBLIC_LENS_POSTS_SOURCE === "lens";
+
+    if (useLensData) {
+      const accessToken = await getLensAccessTokenFromCookie();
+      if (!accessToken) {
+        return NextResponse.json(
+          { error: "Lens access token missing. Reconnect Lens." },
+          { status: 401 }
+        );
+      }
+
+      try {
+        const lensResult = await toggleLensFollow({
+          targetAddress,
+          currentlyFollowing,
+          accessToken,
+        });
+        return NextResponse.json({ success: true, ...lensResult, source: "lens" });
+      } catch (lensError) {
+        console.warn(
+          "Lens follow mutation failed, falling back to local store:",
+          lensError instanceof Error ? lensError.message : "unknown error"
+        );
+      }
+    }
+
     const result = await toggleFollow({
       follower: actorAddress,
       following: targetAddress,
@@ -30,7 +66,7 @@ export async function PATCH(
       return NextResponse.json({ error: result.message }, { status: 400 });
     }
 
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json({ success: true, ...result, source: "local" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to update follow";
     return NextResponse.json({ error: message }, { status: 500 });
