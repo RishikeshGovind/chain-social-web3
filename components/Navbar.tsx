@@ -10,8 +10,6 @@ export default function Navbar() {
 
   const walletAddress = user?.wallet?.address;
 
-  console.log("Wallet Address:", walletAddress);
-
   const handleLensAuth = async () => {
     if (!walletAddress) {
       alert("Wallet not ready yet");
@@ -36,16 +34,29 @@ export default function Navbar() {
         throw new Error(challengeData.error || "Challenge failed");
       }
 
-      const { id, text } = challengeData;
+      const { id, text } = challengeData as { id: string | null; text?: string };
 
       if (!text) {
         throw new Error("Challenge text missing");
       }
 
       // 2️⃣ Sign challenge text
-      const signature = await signMessage({
+      const signedMessageResult = await signMessage({
         message: text,
       });
+      const signature =
+        typeof signedMessageResult === "string"
+          ? signedMessageResult
+          : typeof signedMessageResult === "object" &&
+              signedMessageResult !== null &&
+              "signature" in signedMessageResult &&
+              typeof (signedMessageResult as { signature?: unknown }).signature === "string"
+            ? (signedMessageResult as { signature: string }).signature
+            : null;
+
+      if (!signature) {
+        throw new Error("Wallet signature was not returned");
+      }
 
       // 3️⃣ Authenticate
       const authRes = await fetch("/api/lens/authenticate", {
@@ -54,7 +65,7 @@ export default function Navbar() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          id,
+          id: id ?? undefined,
           address: walletAddress,
           signature,
         }),
@@ -69,8 +80,9 @@ export default function Navbar() {
       alert("Lens authenticated successfully 🚀");
 
     } catch (err) {
-      console.error(err);
-      alert("Lens authentication failed ❌");
+      const message = err instanceof Error ? err.message : "Lens authentication failed";
+      console.error(message);
+      alert(`Lens authentication failed ❌\n${message}`);
     }
 
     setLoading(false);

@@ -4,7 +4,11 @@ import {
   parseAndValidateContent,
 } from "@/lib/posts/content";
 import { deletePost, editPost } from "@/lib/posts/store";
-import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
+import { deleteLensPost, editLensPost } from "@/lib/lens/writes";
+import {
+  getActorAddressFromLensCookie,
+  getLensAccessTokenFromCookie,
+} from "@/lib/server/auth/lens-actor";
 
 export async function PATCH(
   req: Request,
@@ -30,6 +34,37 @@ export async function PATCH(
       return NextResponse.json({ error: parsedContent.error }, { status: 400 });
     }
 
+    const useLensData =
+      process.env.LENS_POSTS_SOURCE === "lens" ||
+      process.env.NEXT_PUBLIC_LENS_POSTS_SOURCE === "lens";
+
+    if (useLensData) {
+      const accessToken = await getLensAccessTokenFromCookie();
+      if (!accessToken) {
+        return NextResponse.json(
+          { error: "Lens access token missing. Reconnect Lens." },
+          { status: 401 }
+        );
+      }
+
+      try {
+        await editLensPost({
+          postId,
+          content: parsedContent.content,
+          accessToken,
+        });
+        return NextResponse.json({
+          success: true,
+          source: "lens",
+        });
+      } catch (lensError) {
+        console.warn(
+          "Lens edit mutation failed, falling back to local store:",
+          lensError instanceof Error ? lensError.message : "unknown error"
+        );
+      }
+    }
+
     const result = await editPost(postId, actorAddress, parsedContent.content);
     if (result.type === "not_found") {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
@@ -38,7 +73,7 @@ export async function PATCH(
       return NextResponse.json({ error: "You can only edit your own posts" }, { status: 403 });
     }
 
-    return NextResponse.json({ success: true, post: result.post });
+    return NextResponse.json({ success: true, post: result.post, source: "local" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to edit post";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -63,6 +98,30 @@ export async function DELETE(
       return NextResponse.json({ error: "Missing post id" }, { status: 400 });
     }
 
+    const useLensData =
+      process.env.LENS_POSTS_SOURCE === "lens" ||
+      process.env.NEXT_PUBLIC_LENS_POSTS_SOURCE === "lens";
+
+    if (useLensData) {
+      const accessToken = await getLensAccessTokenFromCookie();
+      if (!accessToken) {
+        return NextResponse.json(
+          { error: "Lens access token missing. Reconnect Lens." },
+          { status: 401 }
+        );
+      }
+
+      try {
+        await deleteLensPost({ postId, accessToken });
+        return NextResponse.json({ success: true, source: "lens" });
+      } catch (lensError) {
+        console.warn(
+          "Lens delete mutation failed, falling back to local store:",
+          lensError instanceof Error ? lensError.message : "unknown error"
+        );
+      }
+    }
+
     const result = await deletePost(postId, actorAddress);
     if (result.type === "not_found") {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
@@ -71,7 +130,7 @@ export async function DELETE(
       return NextResponse.json({ error: "You can only delete your own posts" }, { status: 403 });
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, source: "local" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to delete post";
     return NextResponse.json({ error: message }, { status: 500 });

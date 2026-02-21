@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { checkPostRateLimit } from "@/lib/posts/rate-limit";
 import { isValidAddress, parseAndValidateContent } from "@/lib/posts/content";
 import { createReply, listReplies } from "@/lib/posts/store";
-import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
+import { createLensReply } from "@/lib/lens/writes";
+import {
+  getActorAddressFromLensCookie,
+  getLensAccessTokenFromCookie,
+} from "@/lib/server/auth/lens-actor";
 
 export async function GET(
   req: Request,
@@ -74,6 +78,40 @@ export async function POST(
         ? body.author.username.localName.trim().slice(0, 32)
         : undefined;
 
+    const useLensData =
+      process.env.LENS_POSTS_SOURCE === "lens" ||
+      process.env.NEXT_PUBLIC_LENS_POSTS_SOURCE === "lens";
+
+    if (useLensData) {
+      const accessToken = await getLensAccessTokenFromCookie();
+      if (!accessToken) {
+        return NextResponse.json(
+          { error: "Lens access token missing. Reconnect Lens." },
+          { status: 401 }
+        );
+      }
+
+      try {
+        const reply = await createLensReply({
+          postId,
+          content: parsedContent.content,
+          actorAddress,
+          accessToken,
+        });
+        return NextResponse.json({
+          success: true,
+          reply,
+          replyCount: null,
+          source: "lens",
+        });
+      } catch (lensError) {
+        console.warn(
+          "Lens reply mutation failed, falling back to local store:",
+          lensError instanceof Error ? lensError.message : "unknown error"
+        );
+      }
+    }
+
     const result = await createReply({
       postId,
       address: actorAddress,
@@ -89,6 +127,7 @@ export async function POST(
       success: true,
       reply: result.reply,
       replyCount: result.replyCount,
+      source: "local",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create reply";

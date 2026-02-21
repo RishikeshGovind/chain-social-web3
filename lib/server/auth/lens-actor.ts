@@ -47,3 +47,8 @@ export async function getActorAddressFromLensCookie() {
 
   return findAddress(payload);
 }
+
+export async function getLensAccessTokenFromCookie() {
+  const cookieStore = await cookies();
+  return cookieStore.get("lensAccessToken")?.value ?? null;
+}
