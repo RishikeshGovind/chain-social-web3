@@ -9,12 +9,15 @@ type Post = {
   timestamp: string;
   metadata?: {
     content?: string;
+    media?: string[];
   };
   author: {
     username?: {
       localName?: string;
     };
     address: string;
+    profileImage?: string;
+    avatar?: string;
   };
   likes?: string[];
   replyCount?: number;
@@ -48,6 +51,9 @@ const PAGE_SIZE = 10;
 const MAX_POST_LENGTH = 280;
 
 export default function FeedPage() {
+    const [hasLensProfile, setHasLensProfile] = useState<boolean | null>(null);
+    const [checkingProfile, setCheckingProfile] = useState(false);
+    const [showMintPrompt, setShowMintPrompt] = useState(false);
   const [posts, setPosts] = useState<Post[]>([]);
   const [feedStatus, setFeedStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +64,9 @@ export default function FeedPage() {
 
   const [newPost, setNewPost] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [mediaFiles, setMediaFiles] = useState<File[]>([]);
+  const [mediaPreview, setMediaPreview] = useState<string[]>([]);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
 
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
@@ -81,6 +90,28 @@ export default function FeedPage() {
       setIsAuthReady(true);
     }
   }, [authenticated]);
+
+  useEffect(() => {
+    // Check for Lens profile after wallet connect
+    if (viewerAddress && isAuthReady && authenticated) {
+      setCheckingProfile(true);
+      fetch(`${process.env.NEXT_PUBLIC_LENS_API_URL || "https://api-v2.lens.dev"}/profiles?ownedBy=${viewerAddress}`)
+        .then(res => res.json())
+        .then(data => {
+          const hasProfile = !!data?.data?.profiles?.items?.length;
+          setHasLensProfile(hasProfile);
+          setShowMintPrompt(!hasProfile);
+        })
+        .catch(() => {
+          setHasLensProfile(false);
+          setShowMintPrompt(true);
+        })
+        .finally(() => setCheckingProfile(false));
+    } else {
+      setHasLensProfile(null);
+      setShowMintPrompt(false);
+    }
+  }, [viewerAddress, isAuthReady, authenticated]);
 
   useEffect(() => {
     nextCursorRef.current = nextCursor;
@@ -147,11 +178,43 @@ export default function FeedPage() {
     setSubmitting(true);
     setError(null);
 
+    let mediaUrls: string[] = [];
+    if (mediaFiles.length > 0) {
+      // Validate file type and size (max 5MB per image, images only)
+      for (const file of mediaFiles) {
+        if (!file.type.startsWith("image/")) {
+          setError("Only image files are allowed.");
+          setSubmitting(false);
+          return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+          setError("Each image must be under 5MB.");
+          setSubmitting(false);
+          return;
+        }
+      }
+      setUploadingMedia(true);
+      try {
+        const uploadPromises = mediaFiles.map(async (file) => {
+          // Dynamically import IPFS helper
+          const { uploadToIPFS } = await import("@/lib/ipfs");
+          return await uploadToIPFS(file);
+        });
+        mediaUrls = await Promise.all(uploadPromises);
+      } catch (err) {
+        setError("Failed to upload media");
+        setSubmitting(false);
+        setUploadingMedia(false);
+        return;
+      }
+      setUploadingMedia(false);
+    }
+
     const tempId = `temp-${crypto.randomUUID()}`;
     const optimisticPost: Post = {
       id: tempId,
       timestamp: new Date().toISOString(),
-      metadata: { content },
+      metadata: { content, media: mediaUrls },
       author: {
         address: viewerAddress,
       },
@@ -161,13 +224,15 @@ export default function FeedPage() {
     };
 
     setNewPost("");
+    setMediaFiles([]);
+    setMediaPreview([]);
     setPosts((prev) => [optimisticPost, ...prev]);
 
     try {
       const res = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, media: mediaUrls }),
       });
       const data = await res.json();
 
@@ -370,21 +435,37 @@ export default function FeedPage() {
         >
           Home
         </Link>
-        {isAuthReady && authenticated && user?.wallet?.address && (
-          <Link
-            href={`/profile/${user.wallet.address}`}
-            className="text-gray-300 hover:text-blue-400 mb-4"
-          >
-            Profile
-          </Link>
-        )}
-        {isAuthReady && authenticated && (
-          <button
-            onClick={logout}
-            className="text-gray-300 hover:text-red-400 text-left"
-          >
-            Logout
-          </button>
+        {isAuthReady && authenticated && user?.wallet?.address ? (
+          <>
+            <Link
+              href={`/profile/${user.wallet.address}`}
+              className="text-gray-300 hover:text-blue-400 mb-4"
+            >
+              Profile
+            </Link>
+            <button
+              onClick={logout}
+              className="text-gray-300 hover:text-red-400 text-left"
+            >
+              Logout
+            </button>
+          </>
+        ) : (
+          <div className="text-gray-400 mt-8">
+            <p className="mb-4">Welcome to ChainSocial!</p>
+            <p className="mb-2">Sign in with your wallet to post and follow others.</p>
+            <div className="mb-2 text-xs text-gray-500">
+              <span role="img" aria-label="wallet">💳</span> Supported wallets: MetaMask, Coinbase, WalletConnect
+            </div>
+            <Link href="https://claim.lens.xyz/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+              Mint a Lens profile
+            </Link>
+            <div className="mt-6 text-xs text-gray-500">
+              <p>Viewing public feed. No login required.</p>
+              <p className="mt-2">We use wallet login for secure, passwordless access. Your funds are never at risk.</p>
+              <Link href="/help" className="text-blue-400 hover:underline mt-2 inline-block">How wallet login works</Link>
+            </div>
+          </div>
         )}
       </aside>
 
@@ -394,33 +475,73 @@ export default function FeedPage() {
 
           {isAuthReady && authenticated && (
             <div className="sticky top-0 z-20 bg-black pt-2 pb-4 -mx-6 px-6 border-b border-gray-800">
-              <form
-                onSubmit={handlePostSubmit}
-                className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow"
-              >
-                <textarea
-                  className="w-full bg-black text-white rounded p-2 mb-2 border border-gray-700"
-                  rows={3}
-                  placeholder="What's happening?"
-                  value={newPost}
-                  onChange={(event) => setNewPost(event.target.value)}
-                  disabled={submitting}
-                />
-                <div className="flex justify-between items-center">
-                  <span
-                    className={`text-xs ${postTooLong ? "text-red-400" : "text-gray-400"}`}
+              {checkingProfile ? (
+                <div className="text-gray-400">Checking Lens profile...</div>
+              ) : hasLensProfile ? (
+                <form
+                  onSubmit={handlePostSubmit}
+                  className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow"
+                >
+                  <textarea
+                    className="w-full bg-black text-white rounded p-2 mb-2 border border-gray-700"
+                    rows={3}
+                    placeholder="What's happening?"
+                    value={newPost}
+                    onChange={(event) => setNewPost(event.target.value)}
+                    disabled={submitting || uploadingMedia}
+                  />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="block mb-2 text-gray-300"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      setMediaFiles(files);
+                      setMediaPreview(files.map((file) => URL.createObjectURL(file)));
+                    }}
+                    disabled={submitting || uploadingMedia}
+                  />
+                  {mediaPreview.length > 0 && (
+                    <div className="flex gap-2 mb-2">
+                      {mediaPreview.map((url, idx) => (
+                        <img
+                          key={idx}
+                          src={url}
+                          alt="preview"
+                          className="w-16 h-16 object-cover rounded border border-gray-700"
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center">
+                    <span
+                      className={`text-xs ${postTooLong ? "text-red-400" : "text-gray-400"}`}
+                    >
+                      {remainingChars} chars left
+                    </span>
+                    <button
+                      type="submit"
+                      className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50"
+                      disabled={!canSubmit || uploadingMedia}
+                    >
+                      {submitting || uploadingMedia ? "Posting..." : "Post"}
+                    </button>
+                  </div>
+                </form>
+              ) : showMintPrompt ? (
+                <div className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow text-center">
+                  <p className="mb-4 text-red-400">You need a Lens profile to post.</p>
+                  <a
+                    href="https://claim.lens.xyz/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bg-blue-600 px-4 py-2 rounded text-white inline-block"
                   >
-                    {remainingChars} chars left
-                  </span>
-                  <button
-                    type="submit"
-                    className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50"
-                    disabled={!canSubmit}
-                  >
-                    {submitting ? "Posting..." : "Post"}
-                  </button>
+                    Mint Lens Profile
+                  </a>
                 </div>
-              </form>
+              ) : null}
             </div>
           )}
 
@@ -460,18 +581,21 @@ export default function FeedPage() {
                   className="border border-gray-700 bg-gray-900 rounded-2xl p-4 flex gap-4 transition-shadow hover:shadow-lg hover:bg-gray-800 shadow-sm"
                 >
                   <Link href={`/profile/${post.author.address}`} className="shrink-0">
-                    <img
-                      src={`https://avatars.dicebear.com/api/identicon/${post.author.address}.svg`}
-                      alt="avatar"
-                      className="w-10 h-10 rounded-full border border-gray-700 bg-white"
-                    />
+                    {/* Profile picture removed, only mini avatar will show next to username */}
                   </Link>
                   <div className="flex-1">
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <div className="flex items-center gap-2">
+                        <img
+                          src={`https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
+                          alt="cute avatar"
+                          className="w-6 h-6 rounded-full border border-gray-700 bg-white mr-1"
+                          style={{ display: 'inline-block', verticalAlign: 'middle' }}
+                        />
                         <Link
                           href={`/profile/${post.author.address}`}
                           className="font-semibold hover:underline"
+                          style={{ display: 'inline-block', verticalAlign: 'middle' }}
                         >
                           {post.author.username?.localName ||
                             shortenAddress(post.author.address)}
@@ -529,7 +653,22 @@ export default function FeedPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="mb-2 whitespace-pre-wrap">{post.metadata?.content}</div>
+                      <>
+                        <div className="mb-2 whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{post.metadata?.content}</div>
+                        {post.metadata?.media && post.metadata.media.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {post.metadata.media.map((url, idx) => (
+                              <img
+                                key={idx}
+                                src={url}
+                                alt="media"
+                                className="max-h-48 rounded border border-gray-700 bg-black"
+                                style={{ maxWidth: '100%', objectFit: 'cover' }}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </>
                     )}
 
                     <div className="flex items-center gap-4 mt-2">

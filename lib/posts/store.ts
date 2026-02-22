@@ -168,13 +168,17 @@ export async function createPost(params: {
   address: string;
   content: string;
   username?: string;
+  media?: string[];
 }) {
   const store = await loadStore();
 
   const post: Post = {
     id: crypto.randomUUID(),
     timestamp: new Date().toISOString(),
-    metadata: { content: params.content },
+    metadata: {
+      content: params.content,
+      ...(params.media ? { media: params.media } : {}),
+    },
     author: {
       address: normalizeAddress(params.address),
       ...(params.username ? { username: { localName: params.username.slice(0, 32) } } : {}),
