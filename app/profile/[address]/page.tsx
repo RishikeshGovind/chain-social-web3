@@ -34,6 +34,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
   const [location, setLocation] = useState<string>("");
   const [website, setWebsite] = useState<string>("");
   const [coverImage, setCoverImage] = useState<string>("");
+  const [avatar, setAvatar] = useState<string>("");
   const [followStats, setFollowStats] = useState<FollowStats>({
     followers: 0,
     following: 0,
@@ -66,6 +67,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
           setLocation(profileData.profile.location || "");
           setWebsite(profileData.profile.website || "");
           setCoverImage(profileData.profile.coverImage || "");
+          setAvatar(profileData.profile.avatar || "");
         }
 
         setFollowStats({
@@ -135,7 +137,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
           )}
           <div className="absolute left-1/2 transform -translate-x-1/2 top-24 z-10">
             <img
-              src={`https://avatars.dicebear.com/api/identicon/${params.address}.svg`}
+              src={`https://api.dicebear.com/7.x/bottts/svg?seed=${params.address}`}
               alt="avatar"
               className="w-32 h-32 rounded-full border-4 border-black shadow-xl bg-white"
             />
@@ -144,7 +146,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
 
         <div className="pt-20 pb-6 px-6 flex flex-col items-center border-b border-gray-800 bg-black">
           <div className="text-2xl font-bold text-white">
-            {displayName || shortenAddress(params.address)}
+            {displayName ? displayName : shortenAddress(params.address)}
           </div>
           <div className="text-blue-400 text-sm mb-2">{shortenAddress(params.address)}</div>
 

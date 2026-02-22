@@ -172,6 +172,19 @@ export async function POST(req: Request) {
       typeof body?.author?.username?.localName === "string"
         ? body.author.username.localName.trim().slice(0, 32)
         : undefined;
+    let media = Array.isArray(body?.media) ? body.media.filter((url) => typeof url === "string") : undefined;
+    // Basic backend validation for media URLs
+    if (media && media.length > 0) {
+      media = media.filter((url) => url.startsWith("http://") || url.startsWith("https://"));
+      if (media.length > 4) {
+        return NextResponse.json({ error: "Max 4 images per post." }, { status: 400 });
+      }
+      for (const url of media) {
+        if (!/\.(jpg|jpeg|png|gif|webp)$/i.test(url.split('?')[0])) {
+          return NextResponse.json({ error: "Only image URLs are allowed." }, { status: 400 });
+        }
+      }
+    }
 
     const useLensData =
       process.env.LENS_POSTS_SOURCE === "lens" ||
@@ -186,11 +199,26 @@ export async function POST(req: Request) {
         );
       }
 
+      // Fetch profileId for actorAddress
+      let profileId = undefined;
+      try {
+        const profileRes = await fetch(`${process.env.LENS_API_URL}/profiles?ownedBy=${actorAddress}`);
+        const profileData = await profileRes.json();
+        profileId = profileData?.data?.profiles?.items?.[0]?.id;
+      } catch (profileError) {
+        console.error("Failed to fetch Lens profileId:", profileError);
+      }
+      if (!profileId) {
+        return NextResponse.json({ error: "Lens profile not found for address." }, { status: 400 });
+      }
+
       try {
         const post = await createLensPost({
           content: parsedContent.content,
           actorAddress,
           accessToken,
+          profileId,
+          media,
         });
         return NextResponse.json({ success: true, post, source: "lens" });
       } catch (lensError) {
@@ -205,6 +233,7 @@ export async function POST(req: Request) {
       address: actorAddress,
       content: parsedContent.content,
       username,
+      media,
     });
 
     return NextResponse.json({ success: true, post, source: "local" });

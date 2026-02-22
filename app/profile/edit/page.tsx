@@ -9,6 +9,7 @@ export default function EditProfilePage() {
   const [location, setLocation] = useState("");
   const [website, setWebsite] = useState("");
   const [coverImage, setCoverImage] = useState("");
+  const [avatar, setAvatar] = useState("");
   const [saved, setSaved] = useState(false);
   const { user } = usePrivy();
   const router = useRouter();
@@ -24,6 +25,7 @@ export default function EditProfilePage() {
           setLocation(data.profile.location || "");
           setWebsite(data.profile.website || "");
           setCoverImage(data.profile.coverImage || "");
+          setAvatar(data.profile.avatar || "");
         }
       });
   }, [user?.wallet?.address]);
@@ -42,6 +44,7 @@ export default function EditProfilePage() {
         location,
         website,
         coverImage,
+        avatar,
       }),
     });
     setSaved(true);
@@ -88,6 +91,14 @@ export default function EditProfilePage() {
             onChange={e => setWebsite(e.target.value)}
             maxLength={64}
             placeholder="yourwebsite.com"
+          />
+          <label className="block mb-2 text-gray-300">Avatar Image URL</label>
+          <input
+            className="w-full p-2 rounded bg-black border border-gray-700 text-white mb-4 focus:outline-none focus:border-blue-500"
+            value={avatar}
+            onChange={e => setAvatar(e.target.value)}
+            maxLength={256}
+            placeholder="Paste an image URL for your avatar"
           />
           <label className="block mb-2 text-gray-300">Cover Image URL</label>
           <input

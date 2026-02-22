@@ -20,7 +20,19 @@ export async function PATCH(
       return NextResponse.json(
         { error: "Unauthorized. Connect Lens before editing." },
         { status: 401 }
-      );
+      let media = Array.isArray(body?.media) ? body.media.filter((url) => typeof url === "string") : undefined;
+      // Basic backend validation for media URLs
+      if (media && media.length > 0) {
+        media = media.filter((url) => url.startsWith("http://") || url.startsWith("https://"));
+        if (media.length > 4) {
+          return NextResponse.json({ error: "Max 4 images per post." }, { status: 400 });
+        }
+        for (const url of media) {
+          if (!/\.(jpg|jpeg|png|gif|webp)$/i.test(url.split('?')[0])) {
+            return NextResponse.json({ error: "Only image URLs are allowed." }, { status: 400 });
+          }
+        }
+      }
     }
 
     const postId = context.params.id;

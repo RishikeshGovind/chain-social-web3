@@ -14,6 +14,7 @@ export type Post = {
   timestamp: string;
   metadata: {
     content: string;
+    media?: string[]; // Array of media URLs (IPFS or local)
   };
   author: Author;
   likes: string[];

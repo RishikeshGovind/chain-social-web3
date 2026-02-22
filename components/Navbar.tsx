@@ -107,17 +107,6 @@ export default function Navbar() {
             >
               Edit Profile
             </Link>
-          </>
-        )}
-        {!authenticated ? (
-          <button
-            onClick={login}
-            className="bg-white text-black px-3 py-1 rounded-lg text-sm font-medium"
-          >
-            Login
-          </button>
-        ) : (
-          <>
             <button
               onClick={handleLensAuth}
               disabled={loading}
@@ -125,7 +114,6 @@ export default function Navbar() {
             >
               {loading ? "Connecting..." : "Connect Lens"}
             </button>
-
             <button
               onClick={logout}
               className="border border-gray-600 px-3 py-1 rounded-lg text-sm"
@@ -133,6 +121,15 @@ export default function Navbar() {
               Logout
             </button>
           </>
+        )}
+        {!authenticated && (
+          <button
+            onClick={login}
+            className="bg-white text-black px-3 py-1 rounded-lg text-sm font-medium"
+            title="Secure login with your wallet. Your funds are never at risk."
+          >
+            Sign in with your wallet
+          </button>
         )}
       </div>
     </nav>

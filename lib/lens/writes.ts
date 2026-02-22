@@ -53,42 +53,51 @@ export async function createLensPost(params: {
   content: string;
   actorAddress: string;
   accessToken: string;
+  profileId: string;
+  media?: string[];
 }) {
-  const data = await executeVariants(
-    [
-      {
-        query: `
-          mutation Post($request: CreatePostRequest!) {
-            post(request: $request) {
-              id
+  try {
+    const data = await executeVariants(
+      [
+        {
+          query: `
+            mutation Post($request: CreatePostRequest!) {
+              post(request: $request) {
+                id
+              }
             }
-          }
-        `,
-        variables: {
-          request: {
-            content: params.content,
+          `,
+          variables: {
+            request: {
+              profileId: params.profileId,
+              content: params.content,
+              media: params.media && params.media.length > 0 ? params.media.map((url) => ({ url, mimeType: "image/jpeg" })) : undefined,
+            },
           },
         },
+      ],
+      params.accessToken
+    );
+
+    const result = extractFirstResult(data);
+    const id = asString(result?.id) ?? `lens-${crypto.randomUUID()}`;
+
+    const post: Post = {
+      id,
+      timestamp: new Date().toISOString(),
+      metadata: { content: params.content, media: params.media },
+      author: {
+        address: normalizeAddress(params.actorAddress),
       },
-    ],
-    params.accessToken
-  );
+      likes: [],
+      replyCount: 0,
+    };
 
-  const result = extractFirstResult(data);
-  const id = asString(result?.id) ?? `lens-${crypto.randomUUID()}`;
-
-  const post: Post = {
-    id,
-    timestamp: new Date().toISOString(),
-    metadata: { content: params.content },
-    author: {
-      address: normalizeAddress(params.actorAddress),
-    },
-    likes: [],
-    replyCount: 0,
-  };
-
-  return post;
+    return post;
+  } catch (error) {
+    console.error("Lens post mutation failed:", error);
+    throw error;
+  }
 }
 
 export async function createLensReply(params: {

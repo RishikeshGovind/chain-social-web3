@@ -11,7 +11,7 @@ export default function Providers({
     <PrivyProvider
       appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID!}
       config={{
-        loginMethods: ["google"],
+        loginMethods: ["wallet"], // Only wallet connect
         appearance: {
           theme: "dark",
           accentColor: "#ffffff",
