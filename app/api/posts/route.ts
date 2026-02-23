@@ -199,14 +199,41 @@ export async function POST(req: Request) {
         );
       }
 
-      // Fetch profileId for actorAddress
-      let profileId = undefined;
+      // Fetch profileId for actorAddress using GraphQL
+      let profileId = actorAddress; // Use address as fallback profileId
       try {
-        const profileRes = await fetch(`${process.env.LENS_API_URL}/profiles?ownedBy=${actorAddress}`);
-        const profileData = await profileRes.json();
-        profileId = profileData?.data?.profiles?.items?.[0]?.id;
+        const profileRes = await lensRequest<any>(
+          `query GetProfile($request: AccountsAvailableRequest!) {
+            accountsAvailable(request: $request) {
+              items {
+                __typename
+                ... on AccountOwned {
+                  account {
+                    address
+                    username { localName }
+                  }
+                }
+                ... on AccountManaged {
+                  account {
+                    address
+                    username { localName }
+                  }
+                }
+              }
+            }
+          }`,
+          { request: { managedBy: actorAddress } },
+          accessToken
+        );
+        // Use the address from the account
+        const account = profileRes?.accountsAvailable?.items?.[0]?.account;
+        if (account?.address) {
+          profileId = account.address;
+        } else if (account?.username?.localName) {
+          profileId = `${actorAddress}/${account.username.localName}`;
+        }
       } catch (profileError) {
-        console.error("Failed to fetch Lens profileId:", profileError);
+        console.warn("Failed to fetch Lens profileId, using address as fallback:", profileError);
       }
       if (!profileId) {
         return NextResponse.json({ error: "Lens profile not found for address." }, { status: 400 });

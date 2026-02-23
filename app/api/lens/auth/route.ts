@@ -5,6 +5,7 @@ import { lensRequest } from "@/lib/lens";
 
 type AuthChallengeResponse = {
   challenge: {
+    id: string;
     text: string;
   };
 };
@@ -23,6 +24,7 @@ export async function POST(req: Request) {
     const query = `
       mutation Challenge($request: ChallengeRequest!) {
         challenge(request: $request) {
+          id
           text
         }
       }
@@ -39,7 +41,7 @@ export async function POST(req: Request) {
     console.log("Lens challenge response:", data);
 
     return NextResponse.json({
-      challenge: data.challenge.text,
+      challenge: data.challenge,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Lens auth error";

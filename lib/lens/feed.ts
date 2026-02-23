@@ -302,8 +302,6 @@ const QUERY_VARIANTS = [
             ... on Post {
               id
               timestamp
-              content
-              body
               metadata {
                 ... on TextOnlyMetadata {
                   content
@@ -324,62 +322,6 @@ const QUERY_VARIANTS = [
                   content
                 }
               }
-              metadataUri
-              contentUri
-              author {
-                address
-                username {
-                  localName
-                }
-              }
-              stats {
-                comments
-              }
-            }
-          }
-          pageInfo {
-            next
-          }
-        }
-      }
-    `,
-    variables: (input: LensFetchInput) => ({
-      request: {
-        ...(input.cursor ? { cursor: input.cursor } : {}),
-      },
-    }),
-  },
-  {
-    query: `
-      query Posts($request: PostsRequest!) {
-        posts(request: $request) {
-          items {
-            __typename
-            ... on Post {
-              id
-              timestamp
-              metadata {
-                ... on TextOnlyMetadata {
-                  content
-                }
-                ... on ArticleMetadata {
-                  content
-                }
-                ... on ImageMetadata {
-                  content
-                }
-                ... on VideoMetadata {
-                  content
-                }
-                ... on EmbedMetadata {
-                  content
-                }
-                ... on LinkMetadata {
-                  content
-                }
-              }
-              metadataUri
-              contentUri
               author {
                 address
                 username {

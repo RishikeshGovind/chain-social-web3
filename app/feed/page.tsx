@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import Link from "next/link";
+import { deduplicatedRequest } from "@/lib/request-deduplicator";
+import { retryWithBackoff } from "@/lib/retry-backoff";
+import { compressImages, getFileSize, getCompressionRatio } from "@/lib/image-compression";
 
 type Post = {
   id: string;
@@ -54,6 +57,8 @@ export default function FeedPage() {
     const [hasLensProfile, setHasLensProfile] = useState<boolean | null>(null);
     const [checkingProfile, setCheckingProfile] = useState(false);
     const [showMintPrompt, setShowMintPrompt] = useState(false);
+    const [isLensAuthenticated, setIsLensAuthenticated] = useState(false);
+    const [authenticatingLens, setAuthenticatingLens] = useState(false);
   const [posts, setPosts] = useState<Post[]>([]);
   const [feedStatus, setFeedStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +72,17 @@ export default function FeedPage() {
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [mediaPreview, setMediaPreview] = useState<string[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+
+  // Cleanup blob URLs on unmount or when previews change
+  useEffect(() => {
+    return () => {
+      mediaPreview.forEach((url) => {
+        if (url.startsWith('blob:')) {
+          URL.revokeObjectURL(url);
+        }
+      });
+    };
+  }, [mediaPreview]);
 
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
@@ -95,12 +111,15 @@ export default function FeedPage() {
     // Check for Lens profile after wallet connect
     if (viewerAddress && isAuthReady && authenticated) {
       setCheckingProfile(true);
-      fetch(`${process.env.NEXT_PUBLIC_LENS_API_URL || "https://api-v2.lens.dev"}/profiles?ownedBy=${viewerAddress}`)
+      fetch("/api/lens/check-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: viewerAddress }),
+      })
         .then(res => res.json())
         .then(data => {
-          const hasProfile = !!data?.data?.profiles?.items?.length;
-          setHasLensProfile(hasProfile);
-          setShowMintPrompt(!hasProfile);
+          setHasLensProfile(data.hasProfile);
+          setShowMintPrompt(!data.hasProfile);
         })
         .catch(() => {
           setHasLensProfile(false);
@@ -136,12 +155,19 @@ export default function FeedPage() {
     try {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
       if (cursor) params.set("cursor", cursor);
+      const url = `/api/posts?${params.toString()}`;
 
-      const res = await fetch(`/api/posts?${params.toString()}`);
-      const data = (await res.json()) as FeedResponse;
+      // Deduplicate identical requests to prevent race conditions
+      const data = await deduplicatedRequest(url, () =>
+        retryWithBackoff(() => fetch(url).then((res) => res.json()), {
+          maxAttempts: 2,
+          initialDelayMs: 300,
+          maxDelayMs: 2000,
+        })
+      ) as FeedResponse;
 
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to load feed");
+      if (!data) {
+        throw new Error("No data received");
       }
 
       const incomingPosts = data.posts ?? [];
@@ -169,6 +195,76 @@ export default function FeedPage() {
     void fetchPosts({ reset: true });
   }, [fetchPosts]);
 
+  async function handleLensAuth() {
+    if (!viewerAddress) return;
+    setAuthenticatingLens(true);
+    setError(null);
+
+    try {
+      // Step 1: Get challenge
+      const challengeRes = await fetch("/api/lens/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: viewerAddress }),
+      });
+
+      if (!challengeRes.ok) {
+        throw new Error("Failed to get Lens challenge");
+      }
+
+      const { challenge } = await challengeRes.json();
+      const { id: challengeId, text: challengeText } = challenge;
+
+      // Step 2: Sign challenge with wallet
+      // Using eth_personal_sign to sign the challenge text
+      let signature: string | null = null;
+      
+      if (window.ethereum) {
+        try {
+          const from = viewerAddress;
+          // Convert message to hex
+          const msgHex = '0x' + challengeText
+            .split('')
+            .map((c: string) => c.charCodeAt(0).toString(16).padStart(2, '0'))
+            .join('');
+          
+          signature = await window.ethereum.request({
+            method: 'personal_sign',
+            params: [msgHex, from],
+          }) as string;
+        } catch (err) {
+          console.warn("Signing failed:", err);
+          throw new Error("Failed to sign with wallet. Please approve the signing request.");
+        }
+      } else {
+        throw new Error("Wallet not available. Please ensure your wallet is connected.");
+      }
+
+      if (!signature) {
+        throw new Error("Failed to sign with wallet");
+      }
+
+      // Step 3: Authenticate with signed message
+      const authRes = await fetch("/api/lens/authenticate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: challengeId, address: viewerAddress, signature }),
+      });
+
+      if (!authRes.ok) {
+        const errorData = await authRes.json();
+        throw new Error(errorData.error || "Failed to authenticate with Lens");
+      }
+
+      setIsLensAuthenticated(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Lens authentication failed";
+      setError(message);
+    } finally {
+      setAuthenticatingLens(false);
+    }
+  }
+
   async function handlePostSubmit(e: React.FormEvent) {
     e.preventDefault();
 
@@ -195,7 +291,22 @@ export default function FeedPage() {
       }
       setUploadingMedia(true);
       try {
-        const uploadPromises = mediaFiles.map(async (file) => {
+        // Compress images before upload to reduce bandwidth
+        const compressedFiles = await compressImages(mediaFiles, {
+          maxWidth: 1920,
+          maxHeight: 1920,
+          quality: 0.85,
+          format: 'webp',
+        });
+
+        // Log compression stats
+        const originalSize = mediaFiles.reduce((sum, f) => sum + f.size, 0);
+        const compressedSize = compressedFiles.reduce((sum, f) => sum + f.size, 0);
+        console.log(
+          `Compressed images: ${getFileSize(originalSize)} → ${getFileSize(compressedSize)} (${getCompressionRatio(originalSize, compressedSize).toFixed(1)}% reduction)`
+        );
+
+        const uploadPromises = compressedFiles.map(async (file) => {
           // Dynamically import IPFS helper
           const { uploadToIPFS } = await import("@/lib/ipfs");
           return await uploadToIPFS(file);
@@ -478,57 +589,70 @@ export default function FeedPage() {
               {checkingProfile ? (
                 <div className="text-gray-400">Checking Lens profile...</div>
               ) : hasLensProfile ? (
-                <form
-                  onSubmit={handlePostSubmit}
-                  className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow"
-                >
-                  <textarea
-                    className="w-full bg-black text-white rounded p-2 mb-2 border border-gray-700"
-                    rows={3}
-                    placeholder="What's happening?"
-                    value={newPost}
-                    onChange={(event) => setNewPost(event.target.value)}
-                    disabled={submitting || uploadingMedia}
-                  />
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="block mb-2 text-gray-300"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files || []);
-                      setMediaFiles(files);
-                      setMediaPreview(files.map((file) => URL.createObjectURL(file)));
-                    }}
-                    disabled={submitting || uploadingMedia}
-                  />
-                  {mediaPreview.length > 0 && (
-                    <div className="flex gap-2 mb-2">
-                      {mediaPreview.map((url, idx) => (
-                        <img
-                          key={idx}
-                          src={url}
-                          alt="preview"
-                          className="w-16 h-16 object-cover rounded border border-gray-700"
-                        />
-                      ))}
+                isLensAuthenticated ? (
+                  <form
+                    onSubmit={handlePostSubmit}
+                    className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow"
+                  >
+                    <textarea
+                      className="w-full bg-black text-white rounded p-2 mb-2 border border-gray-700"
+                      rows={3}
+                      placeholder="What's happening?"
+                      value={newPost}
+                      onChange={(event) => setNewPost(event.target.value)}
+                      disabled={submitting || uploadingMedia}
+                    />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="block mb-2 text-gray-300"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        setMediaFiles(files);
+                        setMediaPreview(files.map((file) => URL.createObjectURL(file)));
+                      }}
+                      disabled={submitting || uploadingMedia}
+                    />
+                    {mediaPreview.length > 0 && (
+                      <div className="flex gap-2 mb-2">
+                        {mediaPreview.map((url, idx) => (
+                          <img
+                            key={idx}
+                            src={url}
+                            alt="preview"
+                            className="w-16 h-16 object-cover rounded border border-gray-700 inline-block"
+                          />
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center">
+                      <span
+                        className={`text-xs ${postTooLong ? "text-red-400" : "text-gray-400"}`}
+                      >
+                        {remainingChars} chars left
+                      </span>
+                      <button
+                        type="submit"
+                        className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50"
+                        disabled={!canSubmit || uploadingMedia}
+                      >
+                        {submitting || uploadingMedia ? "Posting..." : "Post"}
+                      </button>
                     </div>
-                  )}
-                  <div className="flex justify-between items-center">
-                    <span
-                      className={`text-xs ${postTooLong ? "text-red-400" : "text-gray-400"}`}
-                    >
-                      {remainingChars} chars left
-                    </span>
+                  </form>
+                ) : (
+                  <div className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow text-center">
+                    <p className="mb-4 text-gray-300">Authenticate with Lens to post</p>
                     <button
-                      type="submit"
-                      className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50"
-                      disabled={!canSubmit || uploadingMedia}
+                      onClick={handleLensAuth}
+                      disabled={authenticatingLens}
+                      className="bg-blue-600 px-6 py-2 rounded text-white hover:bg-blue-700 disabled:opacity-50"
                     >
-                      {submitting || uploadingMedia ? "Posting..." : "Post"}
+                      {authenticatingLens ? "Connecting..." : "Connect Lens"}
                     </button>
                   </div>
-                </form>
+                )
               ) : showMintPrompt ? (
                 <div className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow text-center">
                   <p className="mb-4 text-red-400">You need a Lens profile to post.</p>
@@ -589,13 +713,11 @@ export default function FeedPage() {
                         <img
                           src={`https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
                           alt="cute avatar"
-                          className="w-6 h-6 rounded-full border border-gray-700 bg-white mr-1"
-                          style={{ display: 'inline-block', verticalAlign: 'middle' }}
+                          className="w-6 h-6 rounded-full border border-gray-700 bg-white mr-1 inline-block align-middle"
                         />
                         <Link
                           href={`/profile/${post.author.address}`}
-                          className="font-semibold hover:underline"
-                          style={{ display: 'inline-block', verticalAlign: 'middle' }}
+                          className="font-semibold hover:underline inline-block align-middle"
                         >
                           {post.author.username?.localName ||
                             shortenAddress(post.author.address)}
@@ -654,7 +776,7 @@ export default function FeedPage() {
                       </div>
                     ) : (
                       <>
-                        <div className="mb-2 whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{post.metadata?.content}</div>
+                          <div className="mb-2 whitespace-pre-wrap break-words overflow-wrap-anywhere break-all">{post.metadata?.content}</div>
                         {post.metadata?.media && post.metadata.media.length > 0 && (
                           <div className="flex flex-wrap gap-2 mb-2">
                             {post.metadata.media.map((url, idx) => (
@@ -662,8 +784,7 @@ export default function FeedPage() {
                                 key={idx}
                                 src={url}
                                 alt="media"
-                                className="max-h-48 rounded border border-gray-700 bg-black"
-                                style={{ maxWidth: '100%', objectFit: 'cover' }}
+                                className="max-h-48 max-w-full rounded border border-gray-700 bg-black object-cover"
                               />
                             ))}
                           </div>
