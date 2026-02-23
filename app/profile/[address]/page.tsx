@@ -127,13 +127,13 @@ export default function UserProfilePage({ params }: { params: { address: string 
   if (!params.address) return notFound();
 
   return (
-    <div className="min-h-screen bg-black text-white flex justify-center">
-      <div className="w-full max-w-2xl bg-black">
+    <div className="min-h-screen bg-background text-text flex justify-center">
+      <div className="w-full max-w-2xl bg-background">
         <div className="h-40 w-full relative">
           {coverImage ? (
             <img src={coverImage} alt="cover" className="object-cover w-full h-full" />
           ) : (
-            <div className="w-full h-full bg-gradient-to-r from-blue-900 to-purple-900" />
+            <div className="w-full h-full bg-accent/30" />
           )}
           <div className="absolute left-1/2 transform -translate-x-1/2 top-24 z-10">
             <img
@@ -144,11 +144,11 @@ export default function UserProfilePage({ params }: { params: { address: string 
           </div>
         </div>
 
-        <div className="pt-20 pb-6 px-6 flex flex-col items-center border-b border-gray-800 bg-black">
-          <div className="text-2xl font-bold text-white">
+        <div className="pt-20 pb-6 px-6 flex flex-col items-center border-b border-border bg-background">
+          <div className="text-2xl font-bold text-text">
             {displayName ? displayName : shortenAddress(params.address)}
           </div>
-          <div className="text-blue-400 text-sm mb-2">{shortenAddress(params.address)}</div>
+          <div className="text-primary text-sm mb-2">{shortenAddress(params.address)}</div>
 
           {!followStats.isSelf && authenticated && (
             <button
@@ -161,9 +161,9 @@ export default function UserProfilePage({ params }: { params: { address: string 
           )}
 
           {bio && (
-            <div className="text-gray-300 text-base text-center mb-2 whitespace-pre-line max-w-xl">{bio}</div>
+            <div className="text-text-light text-base text-center mb-2 whitespace-pre-line max-w-xl">{bio}</div>
           )}
-          <div className="flex gap-4 text-gray-400 text-sm mt-2">
+          <div className="flex gap-4 text-text-light text-sm mt-2">
             {location && <span>{location}</span>}
             {website && (
               <span>
@@ -171,7 +171,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
                   href={website.startsWith("http") ? website : `https://${website}`}
                   target="_blank"
                   rel="noopener"
-                  className="text-blue-400 hover:underline"
+                  className="text-primary hover:underline"
                 >
                   {website}
                 </a>

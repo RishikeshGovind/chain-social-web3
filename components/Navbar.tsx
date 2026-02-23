@@ -89,34 +89,34 @@ export default function Navbar() {
   };
 
   return (
-    <nav className="border-b border-gray-800 px-4 py-3 flex justify-between items-center">
-      <h1 className="text-xl font-bold">ChainSocial</h1>
+    <nav className="border-b border-border bg-card/80 px-8 py-4 flex justify-between items-center shadow-md rounded-b-2xl backdrop-blur-md">
+      <h1 className="text-2xl font-extrabold text-primary tracking-tight drop-shadow-lg">ChainSocial</h1>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-6">
         {authenticated && user?.wallet?.address && (
           <>
             <Link
               href={`/profile/${user.wallet.address}`}
-              className="text-sm text-blue-400 hover:underline"
+              className="text-base text-secondary font-semibold hover:underline px-3 py-2 rounded-lg transition"
             >
               My Profile
             </Link>
             <Link
               href="/profile/edit"
-              className="text-sm text-blue-400 hover:underline"
+              className="text-base text-secondary font-semibold hover:underline px-3 py-2 rounded-lg transition"
             >
               Edit Profile
             </Link>
             <button
               onClick={handleLensAuth}
               disabled={loading}
-              className="border border-gray-600 px-3 py-1 rounded-lg text-sm"
+              className="px-5 py-2 rounded-xl text-base font-bold bg-primary text-white shadow-md hover:bg-secondary/80 focus:ring-2 focus:ring-primary focus:outline-none transition border border-border disabled:opacity-60"
             >
               {loading ? "Connecting..." : "Connect Lens"}
             </button>
             <button
               onClick={logout}
-              className="border border-gray-600 px-3 py-1 rounded-lg text-sm"
+              className="px-5 py-2 rounded-xl text-base font-bold bg-accent text-text shadow-md hover:bg-secondary/60 focus:ring-2 focus:ring-primary focus:outline-none transition border border-border"
             >
               Logout
             </button>
@@ -125,7 +125,7 @@ export default function Navbar() {
         {!authenticated && (
           <button
             onClick={login}
-            className="bg-white text-black px-3 py-1 rounded-lg text-sm font-medium"
+            className="px-5 py-2 rounded-xl text-base font-bold bg-primary text-white shadow-md hover:bg-secondary/80 focus:ring-2 focus:ring-primary focus:outline-none transition border border-border"
             title="Secure login with your wallet. Your funds are never at risk."
           >
             Sign in with your wallet

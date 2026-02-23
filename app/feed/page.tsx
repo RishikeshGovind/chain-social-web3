@@ -427,8 +427,8 @@ export default function FeedPage() {
   const canSubmit = !!viewerAddress && !!trimmedPost && !postTooLong && !submitting;
 
   return (
-    <div className="min-h-screen bg-black text-white grid grid-cols-12">
-      <aside className="hidden md:flex md:col-span-3 lg:col-span-2 flex-col border-r border-gray-800 py-8 px-6">
+    <div className="min-h-screen text-text grid grid-cols-12" style={{background: 'transparent'}}>
+      <aside className="hidden md:flex md:col-span-3 lg:col-span-2 flex-col border-r border-border py-8 px-6 bg-card shadow-sm">
         <Link
           href="/feed"
           className="text-xl font-bold mb-8 text-white hover:text-blue-400"
@@ -439,51 +439,51 @@ export default function FeedPage() {
           <>
             <Link
               href={`/profile/${user.wallet.address}`}
-              className="text-gray-300 hover:text-blue-400 mb-4"
+              className="text-secondary hover:text-primary mb-4"
             >
               Profile
             </Link>
             <button
               onClick={logout}
-              className="text-gray-300 hover:text-red-400 text-left"
+              className="text-text-light hover:text-red-500 text-left transition"
             >
               Logout
             </button>
           </>
         ) : (
-          <div className="text-gray-400 mt-8">
+          <div className="text-text-light mt-8">
             <p className="mb-4">Welcome to ChainSocial!</p>
             <p className="mb-2">Sign in with your wallet to post and follow others.</p>
-            <div className="mb-2 text-xs text-gray-500">
+            <div className="mb-2 text-xs text-text-light">
               <span role="img" aria-label="wallet">💳</span> Supported wallets: MetaMask, Coinbase, WalletConnect
             </div>
-            <Link href="https://claim.lens.xyz/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+            <Link href="https://claim.lens.xyz/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
               Mint a Lens profile
             </Link>
-            <div className="mt-6 text-xs text-gray-500">
+            <div className="mt-6 text-xs text-text-light">
               <p>Viewing public feed. No login required.</p>
               <p className="mt-2">We use wallet login for secure, passwordless access. Your funds are never at risk.</p>
-              <Link href="/help" className="text-blue-400 hover:underline mt-2 inline-block">How wallet login works</Link>
+              <Link href="/help" className="text-primary hover:underline mt-2 inline-block">How wallet login works</Link>
             </div>
           </div>
         )}
       </aside>
 
-      <main className="col-span-12 md:col-span-9 lg:col-span-8 flex justify-center">
+      <main className="col-span-12 md:col-span-9 lg:col-span-8 flex justify-center" style={{background: 'transparent'}}>
         <div className="w-full max-w-2xl px-6 py-6">
-          <h2 className="text-2xl font-semibold mb-6">Global Feed</h2>
+          <h2 className="text-3xl font-bold mb-8 text-white">Global Feed</h2>
 
           {isAuthReady && authenticated && (
-            <div className="sticky top-0 z-20 bg-black pt-2 pb-4 -mx-6 px-6 border-b border-gray-800">
+            <div className="sticky top-0 z-20 bg-background pt-2 pb-4 -mx-6 px-6 border-b border-border">
               {checkingProfile ? (
                 <div className="text-gray-400">Checking Lens profile...</div>
               ) : hasLensProfile ? (
                 <form
                   onSubmit={handlePostSubmit}
-                  className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow"
+                  className="bg-card/80 rounded-2xl p-6 border border-border shadow-md space-y-4"
                 >
                   <textarea
-                    className="w-full bg-black text-white rounded p-2 mb-2 border border-gray-700"
+                    className="w-full bg-background text-text rounded-lg p-3 mb-4 border border-border focus:ring-2 focus:ring-primary focus:outline-none transition text-lg"
                     rows={3}
                     placeholder="What's happening?"
                     value={newPost}
@@ -494,7 +494,7 @@ export default function FeedPage() {
                     type="file"
                     accept="image/*"
                     multiple
-                    className="block mb-2 text-gray-300"
+                    className="block mb-4 text-text-light bg-background border border-border rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:outline-none transition"
                     onChange={(e) => {
                       const files = Array.from(e.target.files || []);
                       setMediaFiles(files);
@@ -509,20 +509,20 @@ export default function FeedPage() {
                           key={idx}
                           src={url}
                           alt="preview"
-                          className="w-16 h-16 object-cover rounded border border-gray-700"
+                          className="w-16 h-16 object-cover rounded border border-border"
                         />
                       ))}
                     </div>
                   )}
-                  <div className="flex justify-between items-center">
+                  <div className="flex justify-between items-center mt-2">
                     <span
-                      className={`text-xs ${postTooLong ? "text-red-400" : "text-gray-400"}`}
+                      className={`text-xs ${postTooLong ? "text-red-400" : "text-text-light"}`}
                     >
                       {remainingChars} chars left
                     </span>
                     <button
                       type="submit"
-                      className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50"
+                      className="bg-primary text-white px-5 py-2 rounded-lg font-semibold shadow-md disabled:opacity-50 hover:bg-secondary/80 focus:ring-2 focus:ring-primary focus:outline-none transition"
                       disabled={!canSubmit || uploadingMedia}
                     >
                       {submitting || uploadingMedia ? "Posting..." : "Post"}
@@ -530,13 +530,13 @@ export default function FeedPage() {
                   </div>
                 </form>
               ) : showMintPrompt ? (
-                <div className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow text-center">
+                <div className="bg-card/80 rounded-2xl p-6 border border-border shadow-md text-center">
                   <p className="mb-4 text-red-400">You need a Lens profile to post.</p>
                   <a
                     href="https://claim.lens.xyz/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="bg-blue-600 px-4 py-2 rounded text-white inline-block"
+                    className="bg-primary px-4 py-2 rounded text-white inline-block hover:bg-secondary/80 focus:ring-2 focus:ring-primary focus:outline-none transition"
                   >
                     Mint Lens Profile
                   </a>
@@ -550,7 +550,7 @@ export default function FeedPage() {
               <span>{error}</span>
               <button
                 onClick={() => void fetchPosts({ reset: true })}
-                className="rounded border border-red-700 px-2 py-1 text-xs"
+                className="rounded border border-red-700 px-2 py-1 text-xs hover:bg-red-50 hover:text-red-700 transition"
               >
                 Retry
               </button>
@@ -567,7 +567,7 @@ export default function FeedPage() {
             <p className="text-gray-500">No posts found.</p>
           )}
 
-          <div className="space-y-4">
+          <div className="space-y-6">
             {posts.map((post) => {
               const liked = (post.likes ?? []).includes(viewerAddress);
               const isOwner = viewerAddress === post.author.address.toLowerCase();
@@ -578,33 +578,33 @@ export default function FeedPage() {
               return (
                 <div
                   key={post.id}
-                  className="border border-gray-700 bg-gray-900 rounded-2xl p-4 flex gap-4 transition-shadow hover:shadow-lg hover:bg-gray-800 shadow-sm"
+                  className="border border-border bg-card/80 rounded-2xl p-6 flex gap-6 transition-shadow hover:shadow-lg hover:bg-accent/40 shadow-md"
                 >
                   <Link href={`/profile/${post.author.address}`} className="shrink-0">
                     {/* Profile picture removed, only mini avatar will show next to username */}
                   </Link>
                   <div className="flex-1">
-                    <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="flex items-center justify-between gap-2 mb-2">
                       <div className="flex items-center gap-2">
                         <img
                           src={`https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
                           alt="cute avatar"
-                          className="w-6 h-6 rounded-full border border-gray-700 bg-white mr-1"
+                          className="w-8 h-8 rounded-full border border-gray-700 bg-white mr-2 shadow"
                           style={{ display: 'inline-block', verticalAlign: 'middle' }}
                         />
                         <Link
                           href={`/profile/${post.author.address}`}
-                          className="font-semibold hover:underline"
+                          className="font-semibold text-white hover:underline"
                           style={{ display: 'inline-block', verticalAlign: 'middle' }}
                         >
                           {post.author.username?.localName ||
                             shortenAddress(post.author.address)}
                         </Link>
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-gray-400">
                           {shortenAddress(post.author.address)}
                         </span>
                         {post.optimistic && (
-                          <span className="text-xs text-amber-400">Sending...</span>
+                          <span className="text-xs text-yellow-300">Sending...</span>
                         )}
                       </div>
                       {isOwner && !post.optimistic && !isEditing && (
@@ -628,7 +628,7 @@ export default function FeedPage() {
                     {isEditing ? (
                       <div className="space-y-2">
                         <textarea
-                          className="w-full bg-black text-white rounded p-2 border border-gray-700"
+                          className="w-full bg-black text-white rounded-lg p-3 border border-gray-700 text-lg focus:ring-2 focus:ring-primary focus:outline-none transition"
                           rows={3}
                           value={editingContent}
                           onChange={(event) => setEditingContent(event.target.value)}
@@ -637,7 +637,7 @@ export default function FeedPage() {
                           <button
                             onClick={() => void saveEdit(post.id)}
                             disabled={editingLoading}
-                            className="bg-blue-600 px-3 py-1 rounded text-sm disabled:opacity-50"
+                            className="bg-blue-600 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 shadow-md hover:bg-blue-700 transition"
                           >
                             Save
                           </button>
@@ -646,7 +646,7 @@ export default function FeedPage() {
                               setEditingPostId(null);
                               setEditingContent("");
                             }}
-                            className="border border-gray-600 px-3 py-1 rounded text-sm"
+                            className="border border-gray-600 px-4 py-2 rounded-lg text-sm shadow-md hover:bg-gray-700 transition"
                           >
                             Cancel
                           </button>
@@ -654,7 +654,7 @@ export default function FeedPage() {
                       </div>
                     ) : (
                       <>
-                        <div className="mb-2 whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{post.metadata?.content}</div>
+                        <div className="mb-2 whitespace-pre-wrap break-words text-text" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{post.metadata?.content}</div>
                         {post.metadata?.media && post.metadata.media.length > 0 && (
                           <div className="flex flex-wrap gap-2 mb-2">
                             {post.metadata.media.map((url, idx) => (
@@ -662,7 +662,7 @@ export default function FeedPage() {
                                 key={idx}
                                 src={url}
                                 alt="media"
-                                className="max-h-48 rounded border border-gray-700 bg-black"
+                                className="max-h-48 rounded border border-border bg-background"
                                 style={{ maxWidth: '100%', objectFit: 'cover' }}
                               />
                             ))}
@@ -673,7 +673,7 @@ export default function FeedPage() {
 
                     <div className="flex items-center gap-4 mt-2">
                       <button
-                        className={`flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-800 transition-colors ${liked ? "text-pink-500" : "text-gray-400"}`}
+                        className={`flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-accent/40 transition-colors ${liked ? "text-pink-500" : "text-text-light"}`}
                         onClick={() => void handleLike(post.id)}
                         disabled={!isAuthReady || !authenticated || post.optimistic}
                         aria-label={liked ? "Unlike" : "Like"}
@@ -683,7 +683,7 @@ export default function FeedPage() {
                       </button>
 
                       <button
-                        className="flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-800 text-gray-400"
+                        className="flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-accent/40 text-text-light"
                         onClick={() => toggleReplies(post.id)}
                         disabled={post.optimistic}
                       >
@@ -691,17 +691,17 @@ export default function FeedPage() {
                         <span>{post.replyCount ?? 0}</span>
                       </button>
 
-                      <span className="text-xs text-gray-500">
+                      <span className="text-xs text-text-light">
                         {new Date(post.timestamp).toLocaleString()}
                       </span>
                     </div>
 
                     {repliesOpen && (
-                      <div className="mt-3 border-t border-gray-700 pt-3 space-y-3">
+                      <div className="mt-3 border-t border-border pt-3 space-y-3">
                         {isAuthReady && authenticated && (
                           <div className="space-y-2">
                             <textarea
-                              className="w-full bg-black text-white rounded p-2 border border-gray-700 text-sm"
+                              className="w-full bg-background text-text rounded p-2 border border-border text-sm"
                               rows={2}
                               placeholder="Write a reply"
                               value={replyDraftByPost[post.id] ?? ""}
@@ -715,7 +715,7 @@ export default function FeedPage() {
                             <button
                               onClick={() => void submitReply(post.id)}
                               disabled={replyLoadingByPost[post.id]}
-                              className="bg-blue-600 px-3 py-1 rounded text-xs disabled:opacity-50"
+                              className="bg-primary px-3 py-1 rounded text-xs disabled:opacity-50 hover:bg-secondary transition"
                             >
                               Reply
                             </button>
@@ -723,11 +723,11 @@ export default function FeedPage() {
                         )}
 
                         {replyLoadingByPost[post.id] && replies.length === 0 && (
-                          <p className="text-xs text-gray-400">Loading replies...</p>
+                          <p className="text-xs text-text-light">Loading replies...</p>
                         )}
 
                         {replies.map((reply) => (
-                          <div key={reply.id} className="rounded-lg bg-black/40 border border-gray-800 p-3">
+                          <div key={reply.id} className="rounded-xl bg-black/60 border border-gray-800 p-4 shadow">
                             <div className="flex items-center gap-2 mb-1">
                               <Link
                                 href={`/profile/${reply.author.address}`}
@@ -744,7 +744,7 @@ export default function FeedPage() {
                         ))}
 
                         {!replyLoadingByPost[post.id] && replies.length === 0 && (
-                          <p className="text-xs text-gray-500">No replies yet.</p>
+                          <p className="text-xs text-text-light">No replies yet.</p>
                         )}
                       </div>
                     )}
@@ -755,11 +755,12 @@ export default function FeedPage() {
           </div>
 
           {nextCursor && (
-            <div className="flex justify-center mt-8">
+            <div className="flex justify-center mt-10">
               <button
                 onClick={() => void fetchPosts({ reset: false })}
                 disabled={loadingMore}
-                className="px-4 py-2 bg-gray-800 rounded disabled:opacity-50"
+                className="px-6 py-2 bg-primary text-white rounded-lg font-semibold shadow-md disabled:opacity-50 hover:bg-secondary/80 focus:ring-2 focus:ring-primary focus:outline-none transition border border-white"
+                style={{color: '#fff'}}
               >
                 {loadingMore ? "Loading..." : "Load more"}
               </button>
@@ -768,7 +769,7 @@ export default function FeedPage() {
         </div>
       </main>
 
-      <aside className="hidden lg:flex lg:col-span-2 flex-col border-l border-gray-800 py-8 px-6">
+      <aside className="hidden lg:flex lg:col-span-2 flex-col border-l border-border py-8 px-6 bg-card shadow-sm">
         <div>
           <h3 className="font-bold mb-4">Trends</h3>
           <ul className="space-y-2 text-gray-400">

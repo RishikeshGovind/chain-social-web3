@@ -1,7 +1,9 @@
 import "./globals.css";
 import type { Metadata } from "next";
+
 import Navbar from "@/components/Navbar";
 import Providers from "@/components/Providers";
+import ParticleBackground from "@/components/ParticleBackground";
 
 export const metadata: Metadata = {
   title: "ChainSocial",
@@ -15,7 +17,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-black text-white min-h-screen">
+      <body className="bg-background text-text min-h-screen">
+        <ParticleBackground />
         <Providers>
           <Navbar />
           <main className="w-full">
