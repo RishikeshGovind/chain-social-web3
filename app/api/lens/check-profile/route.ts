@@ -41,6 +41,9 @@ export async function POST(req: Request) {
       }
     );
 
+    // the GraphQL response shape is dynamic; casting here avoids TypeScript
+    // diagnostics while the eslint rule complains about `any`
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const profiles = (data as any)?.accountsAvailable?.items ?? [];
     const hasProfile = profiles.length > 0;
 

@@ -5,6 +5,7 @@ import {
   parseAndValidateContent,
 } from "@/lib/posts/content";
 import { createPost, listPosts } from "@/lib/posts/store";
+import { validateMediaUrls } from "@/lib/posts/validation";
 import { fetchLensPosts } from "@/lib/lens/feed";
 import { createLensPost } from "@/lib/lens/writes";
 import { lensRequest } from "@/lib/lens";
@@ -172,19 +173,13 @@ export async function POST(req: Request) {
       typeof body?.author?.username?.localName === "string"
         ? body.author.username.localName.trim().slice(0, 32)
         : undefined;
-    let media = Array.isArray(body?.media) ? body.media.filter((url) => typeof url === "string") : undefined;
-    // Basic backend validation for media URLs
-    if (media && media.length > 0) {
-      media = media.filter((url) => url.startsWith("http://") || url.startsWith("https://"));
-      if (media.length > 4) {
-        return NextResponse.json({ error: "Max 4 images per post." }, { status: 400 });
-      }
-      for (const url of media) {
-        if (!/\.(jpg|jpeg|png|gif|webp)$/i.test(url.split('?')[0])) {
-          return NextResponse.json({ error: "Only image URLs are allowed." }, { status: 400 });
-        }
-      }
+
+    // Validate media using shared helper so we can write tests.
+    const mediaValidation = validateMediaUrls(body?.media);
+    if (!mediaValidation.ok) {
+      return NextResponse.json({ error: mediaValidation.error }, { status: 400 });
     }
+    const media = mediaValidation.urls.length > 0 ? mediaValidation.urls : undefined;
 
     const useLensData =
       process.env.LENS_POSTS_SOURCE === "lens" ||
@@ -202,6 +197,7 @@ export async function POST(req: Request) {
       // Fetch profileId for actorAddress using GraphQL
       let profileId = actorAddress; // Use address as fallback profileId
       try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const profileRes = await lensRequest<any>(
           `query GetProfile($request: AccountsAvailableRequest!) {
             accountsAvailable(request: $request) {

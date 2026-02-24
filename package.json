@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:posting": "rm -rf .tmp-posting-tests && npx tsc lib/posts/content.ts lib/posts/rate-limit.ts lib/posts/authz.ts --outDir .tmp-posting-tests --module commonjs --target es2020 && node --test tests/posting-flow.test.mjs"
+    "test:posting": "rm -rf .tmp-posting-tests && npx tsc lib/posts/content.ts lib/posts/rate-limit.ts lib/posts/authz.ts lib/posts/validation.ts --outDir .tmp-posting-tests --module commonjs --target es2020 && node --test tests/posting-flow.test.mjs"
   },
   "dependencies": {
     "@privy-io/react-auth": "^3.13.1",

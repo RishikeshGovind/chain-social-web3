@@ -216,21 +216,17 @@ export default function FeedPage() {
       const { id: challengeId, text: challengeText } = challenge;
 
       // Step 2: Sign challenge with wallet
-      // Using eth_personal_sign to sign the challenge text
+      // eth_personal_sign works with either a plain string or a hex message;
+      // some wallets expect the raw text, so avoid manual hex conversion which
+      // was causing invalid signatures in practice. See discussion in audit.
       let signature: string | null = null;
-      
+
       if (window.ethereum) {
         try {
-          const from = viewerAddress;
-          // Convert message to hex
-          const msgHex = '0x' + challengeText
-            .split('')
-            .map((c: string) => c.charCodeAt(0).toString(16).padStart(2, '0'))
-            .join('');
-          
+          // some providers accept the raw challenge text directly
           signature = await window.ethereum.request({
             method: 'personal_sign',
-            params: [msgHex, from],
+            params: [challengeText, viewerAddress],
           }) as string;
         } catch (err) {
           console.warn("Signing failed:", err);
@@ -312,7 +308,8 @@ export default function FeedPage() {
           return await uploadToIPFS(file);
         });
         mediaUrls = await Promise.all(uploadPromises);
-      } catch (err) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      } catch (_err) {
         setError("Failed to upload media");
         setSubmitting(false);
         setUploadingMedia(false);

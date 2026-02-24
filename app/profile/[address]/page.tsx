@@ -137,7 +137,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
           )}
           <div className="absolute left-1/2 transform -translate-x-1/2 top-24 z-10">
             <img
-              src={`https://api.dicebear.com/7.x/bottts/svg?seed=${params.address}`}
+              src={avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${params.address}`}
               alt="avatar"
               className="w-32 h-32 rounded-full border-4 border-black shadow-xl bg-white"
             />

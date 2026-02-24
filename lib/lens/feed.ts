@@ -128,6 +128,7 @@ function readContent(metadata: unknown): string {
   return deepFindText(object) ?? "";
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function extractMetadataUri(metadata: unknown): string | null {
   if (typeof metadata === "string") {
     const trimmed = metadata.trim();
@@ -171,7 +172,9 @@ async function fetchMetadataContent(uri: string): Promise<string> {
     const content = readContent(text);
     metadataContentCache.set(uri, content);
     return content;
-  } catch (error) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
+    // ignore fetch errors, but we don't need the variable
     metadataContentCache.set(uri, "");
     return "";
   }

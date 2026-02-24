@@ -6,7 +6,6 @@ import Link from "next/link";
 export default function Navbar() {
   const { login, logout, authenticated, user } = usePrivy();
 
-  const walletAddress = user?.wallet?.address;
 
   return (
     <nav className="border-b border-gray-800 px-4 py-3 flex justify-between items-center">
