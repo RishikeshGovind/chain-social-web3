@@ -9,18 +9,30 @@ type GraphQLResponse<TData> = {
 };
 
 function getLensApiCandidates() {
+  // Lens v3 uses api.lens.xyz/graphql as the primary endpoint
   const envUrl = process.env.LENS_API_URL?.trim();
-  const urls = [
-    envUrl,
-    "https://api.lens.xyz",
-    "https://api.lens.xyz/graphql",
-    "https://api-v2.lens.dev/",
-    "https://api-v2.lens.dev/graphql",
-    "https://api.lens.dev/graphql",
-    "https://api.lens.dev/",
-  ].filter((url): url is string => !!url);
+  
+  // Ensure URL ends with /graphql
+  const normalizeUrl = (url: string | undefined): string | null => {
+    if (!url || url.length === 0) return null;
+    // Remove trailing slash
+    url = url.replace(/\/$/, '');
+    // Add /graphql if not present
+    if (!url.endsWith('/graphql')) {
+      url = `${url}/graphql`;
+    }
+    return url;
+  };
+  
+  const normalized = normalizeUrl(envUrl);
+  const defaultUrl = "https://api.lens.xyz/graphql";
+  
+  const urls: string[] = [];
+  if (normalized) urls.push(normalized);
+  if (!urls.includes(defaultUrl)) urls.push(defaultUrl);
 
-  return Array.from(new Set(urls));
+  console.log("[Lens] Using API endpoints:", urls);
+  return urls;
 }
 
 export async function lensRequest<TData = Record<string, unknown>, TVariables = Record<string, unknown>>(
@@ -36,28 +48,39 @@ export async function lensRequest<TData = Record<string, unknown>, TVariables = 
 
   const candidates = getLensApiCandidates();
   
+  if (candidates.length === 0) {
+    throw new Error(`Lens request failed: No endpoints available`);
+  }
+  
   // Try primary endpoint first with shorter timeout, then fall back to others
   const primaryUrl = candidates[0];
-  if (primaryUrl) {
-    try {
-      return await makeRequest<TData>(
-        primaryUrl,
-        query,
-        variables,
-        accessToken,
-        appOrigin,
-        referer,
-        5000 // Shorter timeout for primary
-      );
-    } catch {
-      // Fall through to parallel backup attempts
+  let primaryError: Error | null = null;
+  
+  try {
+    return await makeRequest<TData>(
+      primaryUrl,
+      query,
+      variables,
+      accessToken,
+      appOrigin,
+      referer,
+      8000
+    );
+  } catch (err) {
+    primaryError = err instanceof Error ? err : new Error(String(err));
+    // if the error clearly indicates the account is still onboarding we
+    // propagate it immediately rather than continuing to hit other hosts.
+    if (primaryError.message.includes("ONBOARDING_USER")) {
+      throw primaryError;
     }
+    // otherwise fall through to backup attempts
   }
 
-  // Try remaining endpoints in parallel with exponential backoff
+  // Try remaining endpoints in parallel
   const backupUrls = candidates.slice(1);
   if (backupUrls.length === 0) {
-    throw new Error(`Lens request failed: No endpoints available`);
+    // No backups, rethrow the primary error
+    throw primaryError || new Error("Lens request failed");
   }
 
   const results = await Promise.allSettled(
@@ -81,10 +104,16 @@ export async function lensRequest<TData = Record<string, unknown>, TVariables = 
     }
   }
 
-  // All failed
+  // All failed – inspect for onboarding-specific message first
   const failures = results.map((r) =>
     r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : 'unknown'
   );
+
+  const onboarding = failures.find((m) => m.includes("ONBOARDING_USER"));
+  if (onboarding) {
+    throw new Error(onboarding);
+  }
+
   throw new Error(`Lens request failed across all endpoints: ${failures.join(' | ')}`);
 }
 
@@ -97,19 +126,30 @@ async function makeRequest<TData>(
   referer: string,
   timeout: number
 ): Promise<TData> {
-  const response = await axios.post<GraphQLResponse<TData>>(
+// debug output to help track schema mismatches at each endpoint
+  console.log("[Lens] POST", url, {
+    query: query.replace(/\s+/g, " ").trim(),
+    variables,
+    hasAccessToken: !!accessToken,
+  });
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    Origin: appOrigin,
+    Referer: referer,
+  };
+  
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+    console.log("[Lens] Using Authorization header with token");
+  }
+
+  const response = await axios.post<GraphQLResponse<TData>>( 
     url,
     { query, variables },
     {
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Origin: appOrigin,
-        Referer: referer,
-        ...(accessToken && {
-          Authorization: `Bearer ${accessToken}`,
-        }),
-      },
+      headers,
       timeout,
     }
   );

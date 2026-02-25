@@ -1,8 +1,8 @@
 //lib/lens/feed.ts
 
-import { lensRequest } from "@/lib/lens";
-import { normalizeAddress } from "@/lib/posts/content";
-import type { Post } from "@/lib/posts/types";
+import { lensRequest } from "../lens";
+import { normalizeAddress } from "../posts/content";
+import type { Post } from "../posts/types";
 
 type LensFetchInput = {
   limit: number;
@@ -18,7 +18,8 @@ type LensFeedOutput = {
   nextCursor: string | null;
   debugMetadata?: unknown[];
 };
-const metadataContentCache = new Map<string, string>();
+// cache may store either the raw text or a parsed JSON object
+const metadataContentCache = new Map<string, unknown>();
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -91,7 +92,7 @@ function deepFindText(value: unknown): string | null {
   return null;
 }
 
-function readContent(metadata: unknown): string {
+function extractContent(metadata: unknown): string {
   if (typeof metadata === "string") {
     try {
       const parsed = JSON.parse(metadata) as Record<string, unknown>;
@@ -149,9 +150,12 @@ function extractMetadataUri(metadata: unknown): string | null {
   return null;
 }
 
-async function fetchMetadataContent(uri: string): Promise<string> {
+// return both the raw metadata and a pre-extracted text content so
+// callers can pull out richer information such as media URLs.  the cache now
+// stores whatever object was returned from the URI.
+async function fetchMetadata(uri: string): Promise<unknown> {
   if (metadataContentCache.has(uri)) {
-    return metadataContentCache.get(uri) ?? "";
+    return metadataContentCache.get(uri);
   }
 
   try {
@@ -169,18 +173,105 @@ async function fetchMetadataContent(uri: string): Promise<string> {
     }
 
     const text = await res.text();
-    const content = readContent(text);
-    metadataContentCache.set(uri, content);
-    return content;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = text;
+    }
+
+    metadataContentCache.set(uri, parsed);
+    return parsed;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   } catch (_error) {
-    // ignore fetch errors, but we don't need the variable
     metadataContentCache.set(uri, "");
     return "";
   }
 }
 
-async function mapNodeToPost(
+// Extract media URLs from various possible structures in the Lens API response
+function extractMediaFromMetadata(metadata: unknown): string[] {
+  const urls: string[] = [];
+  const obj = asObject(metadata);
+  if (!obj) return urls;
+
+  // Direct media array (common in Lens v2)
+  const mediaArray = obj.media;
+  if (Array.isArray(mediaArray)) {
+    for (const item of mediaArray) {
+      // Can be { url: string } or { item: string } or just string
+      const url = typeof item === 'string' 
+        ? item 
+        : asString(asObject(item)?.url) ?? asString(asObject(item)?.item);
+      if (url) urls.push(normalizeMetadataUri(url));
+    }
+  }
+
+  // attachments array (Lens v3 format with MediaImage/MediaVideo)
+  const attachments = obj.attachments;
+  if (Array.isArray(attachments)) {
+    for (const item of attachments) {
+      const itemObj = asObject(item);
+      // MediaImage and MediaVideo have 'item' field
+      const url = asString(itemObj?.item) ?? asString(itemObj?.url) ?? asString(itemObj?.uri);
+      if (url) urls.push(normalizeMetadataUri(url));
+    }
+  }
+
+  // image field - can be string OR object with { item, raw } (Lens v3)
+  const imageField = obj.image;
+  if (typeof imageField === 'string') {
+    urls.push(normalizeMetadataUri(imageField));
+  } else if (asObject(imageField)) {
+    const imageObj = asObject(imageField)!;
+    const imgUrl = asString(imageObj.item) ?? asString(imageObj.raw) ?? asString(imageObj.url);
+    if (imgUrl) urls.push(normalizeMetadataUri(imgUrl));
+  }
+
+  // video field - can be string OR object with { item, raw } (Lens v3)
+  const videoField = obj.video;
+  if (typeof videoField === 'string') {
+    urls.push(normalizeMetadataUri(videoField));
+  } else if (asObject(videoField)) {
+    const videoObj = asObject(videoField)!;
+    const vidUrl = asString(videoObj.item) ?? asString(videoObj.raw) ?? asString(videoObj.url);
+    if (vidUrl) urls.push(normalizeMetadataUri(vidUrl));
+  }
+
+  // audio field (for AudioMetadata)
+  const audioField = obj.audio;
+  if (typeof audioField === 'string') {
+    urls.push(normalizeMetadataUri(audioField));
+  } else if (asObject(audioField)) {
+    const audioObj = asObject(audioField)!;
+    const audUrl = asString(audioObj.item) ?? asString(audioObj.raw) ?? asString(audioObj.url);
+    if (audUrl) urls.push(normalizeMetadataUri(audUrl));
+  }
+
+  // asset field (some Lens formats)
+  const asset = asObject(obj.asset);
+  if (asset) {
+    const assetUrl = asString(asset.url) ?? asString(asset.uri) ?? asString(asset.item);
+    if (assetUrl) urls.push(normalizeMetadataUri(assetUrl));
+    
+    // nested image/video in asset
+    const assetImage = asObject(asset.image);
+    const assetVideo = asObject(asset.video);
+    if (assetImage) {
+      const imgUrl = asString(assetImage.item) ?? asString(assetImage.raw) ?? asString(assetImage.url);
+      if (imgUrl) urls.push(normalizeMetadataUri(imgUrl));
+    }
+    if (assetVideo) {
+      const vidUrl = asString(assetVideo.item) ?? asString(assetVideo.raw) ?? asString(assetVideo.url);
+      if (vidUrl) urls.push(normalizeMetadataUri(vidUrl));
+    }
+  }
+
+  // Remove duplicates and filter out empty strings
+  return [...new Set(urls)].filter((u) => u.length > 0);
+}
+
+export async function mapNodeToPost(
   node: unknown,
   debug?: boolean
 ): Promise<{ post: Post; rawMetadata?: unknown } | null> {
@@ -202,23 +293,46 @@ async function mapNodeToPost(
   const usernameObj = asObject(authorObj?.username);
   const localName = asString(usernameObj?.localName);
 
-  // Try contentUri, then metadataUri, then direct fields
+  // Try inline metadata first (from GraphQL response), then fallback to URIs
+  const inlineMetadata = asObject(object.metadata);
   const contentUri = asString(object.contentUri);
   const metadataUri = asString(object.metadataUri);
+  
   let content = "";
+  let mediaUrls: string[] = [];
+  let metadataRaw: unknown;
 
-  if (contentUri) {
+  // Priority 1: Extract from inline metadata object (Lens v2 GraphQL response)
+  if (inlineMetadata) {
+    content = extractContent(inlineMetadata);
+    mediaUrls = extractMediaFromMetadata(inlineMetadata);
+  }
+
+  // Priority 2: Fetch from contentUri if content is still empty
+  if (!content && contentUri) {
     const normalized = normalizeMetadataUri(contentUri);
-    content = await fetchMetadataContent(normalized);
-  } else if (metadataUri) {
+    metadataRaw = await fetchMetadata(normalized);
+    content = extractContent(metadataRaw);
+    if (!mediaUrls.length) {
+      mediaUrls = extractMediaFromMetadata(metadataRaw);
+    }
+  }
+
+  // Priority 3: Fetch from metadataUri if content is still empty
+  if (!content && metadataUri) {
     const normalized = normalizeMetadataUri(metadataUri);
-    content = await fetchMetadataContent(normalized);
-  } else {
-    // Fallback to direct fields if URIs are missing
+    metadataRaw = await fetchMetadata(normalized);
+    content = extractContent(metadataRaw);
+    if (!mediaUrls.length) {
+      mediaUrls = extractMediaFromMetadata(metadataRaw);
+    }
+  }
+
+  // Priority 4: Direct fields fallback
+  if (!content) {
     const contentField = asString(object.content);
     const bodyField = asString(object.body);
-    const metadataField = readContent(object.metadata);
-    content = contentField || bodyField || metadataField || "";
+    content = contentField || bodyField || "";
   }
 
   const statsObj = asObject(object.stats) ?? {};
@@ -228,7 +342,7 @@ async function mapNodeToPost(
   const post: Post = {
     id,
     timestamp: createdAt,
-    metadata: { content },
+    metadata: { content, ...(mediaUrls.length ? { media: mediaUrls } : {}) },
     author: {
       address: normalizeAddress(address),
       ...(localName ? { username: { localName } } : {}),
@@ -237,7 +351,6 @@ async function mapNodeToPost(
     replyCount: repliesCount,
   };
 
-  // ...existing code...
   return {
     post,
     ...(debug
@@ -245,6 +358,8 @@ async function mapNodeToPost(
           rawMetadata: {
             typename: object.__typename ?? null,
             contentUri: object.contentUri ?? null,
+            inlineMetadataTypename: inlineMetadata?.__typename ?? null,
+            mediaCount: mediaUrls.length,
           },
         }
       : {}),
@@ -295,8 +410,14 @@ async function extractPosts(
   return { items: [], nextCursor: null };
 }
 
+// Lens v3 uses PageSize enum: TEN or FIFTY
+function getPageSize(limit: number): string {
+  return limit > 10 ? "FIFTY" : "TEN";
+}
+
 const QUERY_VARIANTS = [
   {
+    // Most complete query - includes all media types and image/video assets
     query: `
       query Posts($request: PostsRequest!) {
         posts(request: $request) {
@@ -306,17 +427,50 @@ const QUERY_VARIANTS = [
               id
               timestamp
               metadata {
+                __typename
                 ... on TextOnlyMetadata {
                   content
                 }
                 ... on ArticleMetadata {
                   content
+                  attachments {
+                    ... on MediaImage {
+                      item
+                    }
+                    ... on MediaVideo {
+                      item
+                    }
+                  }
                 }
                 ... on ImageMetadata {
                   content
+                  image {
+                    item
+                    raw
+                  }
+                  attachments {
+                    ... on MediaImage {
+                      item
+                    }
+                  }
                 }
                 ... on VideoMetadata {
                   content
+                  video {
+                    item
+                    raw
+                  }
+                  attachments {
+                    ... on MediaVideo {
+                      item
+                    }
+                  }
+                }
+                ... on AudioMetadata {
+                  content
+                  audio {
+                    item
+                  }
                 }
                 ... on EmbedMetadata {
                   content
@@ -344,11 +498,76 @@ const QUERY_VARIANTS = [
     `,
     variables: (input: LensFetchInput) => ({
       request: {
+        pageSize: getPageSize(input.limit || 20),
         ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.author ? { filter: { authors: [input.author] } } : {}),
       },
     }),
   },
   {
+    // Simplified media query with just media array
+    query: `
+      query Posts($request: PostsRequest!) {
+        posts(request: $request) {
+          items {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              metadata {
+                __typename
+                ... on TextOnlyMetadata {
+                  content
+                }
+                ... on ArticleMetadata {
+                  content
+                }
+                ... on ImageMetadata {
+                  content
+                  image {
+                    item
+                  }
+                }
+                ... on VideoMetadata {
+                  content
+                  video {
+                    item
+                  }
+                }
+                ... on EmbedMetadata {
+                  content
+                }
+                ... on LinkMetadata {
+                  content
+                }
+              }
+              author {
+                address
+                username {
+                  localName
+                }
+              }
+              stats {
+                comments
+              }
+            }
+          }
+          pageInfo {
+            next
+          }
+        }
+      }
+    `,
+    variables: (input: LensFetchInput) => ({
+      request: {
+        pageSize: getPageSize(input.limit || 20),
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.author ? { filter: { authors: [input.author] } } : {}),
+      },
+    }),
+  },
+  {
+    // Text-only fallback
     query: `
       query Posts($request: PostsRequest!) {
         posts(request: $request) {
@@ -381,11 +600,14 @@ const QUERY_VARIANTS = [
     `,
     variables: (input: LensFetchInput) => ({
       request: {
+        pageSize: getPageSize(input.limit || 20),
         ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.author ? { filter: { authors: [input.author] } } : {}),
       },
     }),
   },
   {
+    // Minimal fallback
     query: `
       query Posts($request: PostsRequest!) {
         posts(request: $request) {
@@ -413,7 +635,9 @@ const QUERY_VARIANTS = [
     `,
     variables: (input: LensFetchInput) => ({
       request: {
+        pageSize: getPageSize(input.limit || 20),
         ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.author ? { filter: { authors: [input.author] } } : {}),
       },
     }),
   },

@@ -13,7 +13,8 @@ export async function POST(req: Request) {
     }
 
     // Query Lens API for accounts/profiles available for this wallet
-    // Using accountsAvailable query which is the correct v2 endpoint
+    // Using accountsAvailable query which is the correct v2/v3 endpoint
+    // Include both owned and managed accounts
     const data = await lensRequest(
       `
         query AccountsAvailable($request: AccountsAvailableRequest!) {
@@ -37,6 +38,7 @@ export async function POST(req: Request) {
       {
         request: {
           managedBy: address,
+          includeOwned: true,
         },
       }
     );
@@ -46,9 +48,15 @@ export async function POST(req: Request) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const profiles = (data as any)?.accountsAvailable?.items ?? [];
     const hasProfile = profiles.length > 0;
+    
+    // Extract the first account address if available
+    const accountAddress = profiles.length > 0 
+      ? profiles[0]?.account?.address ?? null 
+      : null;
 
     return NextResponse.json({
       hasProfile,
+      accountAddress,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Profile check failed";

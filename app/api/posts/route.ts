@@ -14,6 +14,55 @@ import {
   getLensAccessTokenFromCookie,
 } from "@/lib/server/auth/lens-actor";
 
+// Helper to get Lens account address from wallet address
+async function getLensAccountAddress(walletAddress: string): Promise<string | null> {
+  try {
+    const data = await lensRequest<{
+      accountsAvailable: {
+        items: Array<{
+          __typename: string;
+          account?: { address: string };
+        }>;
+      };
+    }>(
+      `
+        query AccountsAvailable($request: AccountsAvailableRequest!) {
+          accountsAvailable(request: $request) {
+            items {
+              __typename
+              ... on AccountOwned {
+                account {
+                  address
+                }
+              }
+              ... on AccountManaged {
+                account {
+                  address
+                }
+              }
+            }
+          }
+        }
+      `,
+      {
+        request: {
+          managedBy: walletAddress,
+          includeOwned: true,
+        },
+      }
+    );
+
+    const items = data?.accountsAvailable?.items ?? [];
+    // Prefer AccountOwned over AccountManaged
+    const owned = items.find((i) => i.__typename === "AccountOwned");
+    const managed = items.find((i) => i.__typename === "AccountManaged");
+    const account = owned ?? managed;
+    return account?.account?.address ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -187,6 +236,9 @@ export async function POST(req: Request) {
 
     if (useLensData) {
       const accessToken = await getLensAccessTokenFromCookie();
+      console.log("[Post API] Has access token:", !!accessToken);
+      console.log("[Post API] Access token preview:", accessToken ? `${accessToken.slice(0, 20)}...` : "none");
+      
       if (!accessToken) {
         return NextResponse.json(
           { error: "Lens access token missing. Reconnect Lens." },
@@ -194,60 +246,44 @@ export async function POST(req: Request) {
         );
       }
 
-      // Fetch profileId for actorAddress using GraphQL
-      let profileId = actorAddress; // Use address as fallback profileId
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const profileRes = await lensRequest<any>(
-          `query GetProfile($request: AccountsAvailableRequest!) {
-            accountsAvailable(request: $request) {
-              items {
-                __typename
-                ... on AccountOwned {
-                  account {
-                    address
-                    username { localName }
-                  }
-                }
-                ... on AccountManaged {
-                  account {
-                    address
-                    username { localName }
-                  }
-                }
-              }
-            }
-          }`,
-          { request: { managedBy: actorAddress } },
-          accessToken
+      // Lens v3 requires the Lens account address (not wallet address) for posting
+      // Look up the user's Lens account address first
+      const lensAccountAddress = await getLensAccountAddress(actorAddress);
+      console.log("[Post API] Lens account address:", lensAccountAddress);
+      
+      if (!lensAccountAddress) {
+        return NextResponse.json(
+          { error: "You must mint a Lens profile before posting." },
+          { status: 403 }
         );
-        // Use the address from the account
-        const account = profileRes?.accountsAvailable?.items?.[0]?.account;
-        if (account?.address) {
-          profileId = account.address;
-        } else if (account?.username?.localName) {
-          profileId = `${actorAddress}/${account.username.localName}`;
-        }
-      } catch (profileError) {
-        console.warn("Failed to fetch Lens profileId, using address as fallback:", profileError);
-      }
-      if (!profileId) {
-        return NextResponse.json({ error: "Lens profile not found for address." }, { status: 400 });
       }
 
       try {
+        console.log("[Post API] Creating Lens post...");
         const post = await createLensPost({
           content: parsedContent.content,
-          actorAddress,
+          actorAddress: lensAccountAddress, // Use Lens account address, not wallet
           accessToken,
-          profileId,
           media,
         });
+        console.log("[Post API] Lens post created:", post.id);
         return NextResponse.json({ success: true, post, source: "lens" });
       } catch (lensError) {
-        console.warn(
-          "Lens post mutation failed, falling back to local store:",
-          lensError instanceof Error ? lensError.message : "unknown error"
+        const errorMsg = lensError instanceof Error ? lensError.message : "unknown error";
+        console.error("[Post API] Lens post mutation failed:", errorMsg);
+        
+        if (lensError instanceof Error && lensError.name === "LensOnboardingError") {
+          // inform client about onboarding requirement
+          return NextResponse.json(
+            { error: "You must mint a Lens profile before posting." },
+            { status: 403 }
+          );
+        }
+        
+        // Return the actual Lens error instead of silently falling back
+        return NextResponse.json(
+          { error: `Lens post failed: ${errorMsg}`, lensError: errorMsg },
+          { status: 500 }
         );
       }
     }

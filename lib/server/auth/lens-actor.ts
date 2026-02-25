@@ -14,6 +14,18 @@ function parseJwtPayload(token: string) {
   }
 }
 
+export function isTokenExpired(token: string): boolean {
+  const payload = parseJwtPayload(token);
+  if (!payload) return true;
+  
+  const exp = payload.exp;
+  if (typeof exp !== "number") return true;
+  
+  // Add 60 second buffer
+  const now = Math.floor(Date.now() / 1000);
+  return exp < now + 60;
+}
+
 function findAddress(value: unknown): string | null {
   if (typeof value === "string") {
     const match = value.match(/0x[a-fA-F0-9]{40}/);

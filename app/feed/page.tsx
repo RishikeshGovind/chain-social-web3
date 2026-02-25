@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
 import Link from "next/link";
 import { deduplicatedRequest } from "@/lib/request-deduplicator";
 import { retryWithBackoff } from "@/lib/retry-backoff";
@@ -58,6 +58,7 @@ export default function FeedPage() {
     const [checkingProfile, setCheckingProfile] = useState(false);
     const [showMintPrompt, setShowMintPrompt] = useState(false);
     const [isLensAuthenticated, setIsLensAuthenticated] = useState(false);
+    const [checkingLensSession, setCheckingLensSession] = useState(true);
     const [authenticatingLens, setAuthenticatingLens] = useState(false);
   const [posts, setPosts] = useState<Post[]>([]);
   const [feedStatus, setFeedStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -94,6 +95,7 @@ export default function FeedPage() {
   const [replyLoadingByPost, setReplyLoadingByPost] = useState<Record<string, boolean>>({});
 
   const { authenticated, user, logout } = usePrivy();
+  const { wallets } = useWallets();
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   const viewerAddress = useMemo(
@@ -132,6 +134,33 @@ export default function FeedPage() {
     }
   }, [viewerAddress, isAuthReady, authenticated]);
 
+  // Check for existing Lens session on page load
+  useEffect(() => {
+    if (!isAuthReady || !authenticated) {
+      setCheckingLensSession(false);
+      return;
+    }
+
+    console.log("[Lens] Checking session...");
+    fetch("/api/lens/session", { credentials: "include" })
+      .then(res => res.json())
+      .then(data => {
+        console.log("[Lens] Session check result:", data);
+        if (data.authenticated) {
+          setIsLensAuthenticated(true);
+          console.log("[Lens] Session restored successfully");
+        } else {
+          console.log("[Lens] No valid session found, reason:", data.reason);
+        }
+      })
+      .catch(err => {
+        console.warn("[Lens] Session check failed:", err);
+      })
+      .finally(() => {
+        setCheckingLensSession(false);
+      });
+  }, [isAuthReady, authenticated]);
+
   useEffect(() => {
     nextCursorRef.current = nextCursor;
   }, [nextCursor]);
@@ -159,7 +188,7 @@ export default function FeedPage() {
 
       // Deduplicate identical requests to prevent race conditions
       const data = await deduplicatedRequest(url, () =>
-        retryWithBackoff(() => fetch(url).then((res) => res.json()), {
+        retryWithBackoff(() => fetch(url, { credentials: "include" }).then((res) => res.json()), {
           maxAttempts: 2,
           initialDelayMs: 300,
           maxDelayMs: 2000,
@@ -171,7 +200,33 @@ export default function FeedPage() {
       }
 
       const incomingPosts = data.posts ?? [];
-      setPosts((prev) => (reset ? incomingPosts : [...prev, ...incomingPosts]));
+      
+      // Merge with cached recent posts (for Lens indexing delay)
+      // Only do this on initial load (reset=true)
+      let mergedPosts = incomingPosts;
+      if (reset) {
+        try {
+          const cachedPosts = JSON.parse(localStorage.getItem("recentPosts") || "[]") as Post[];
+          // Filter out cached posts older than 5 minutes (should be indexed by then)
+          const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+          const recentCached = cachedPosts.filter(p => {
+            const postTime = new Date(p.timestamp).getTime();
+            return postTime > fiveMinutesAgo;
+          });
+          // Update localStorage with filtered posts
+          if (recentCached.length !== cachedPosts.length) {
+            localStorage.setItem("recentPosts", JSON.stringify(recentCached));
+          }
+          // Merge: add cached posts that aren't already in the feed
+          const incomingIds = new Set(incomingPosts.map(p => p.id));
+          const uniqueCached = recentCached.filter(p => !incomingIds.has(p.id));
+          mergedPosts = [...uniqueCached, ...incomingPosts];
+        } catch {
+          // ignore localStorage errors
+        }
+      }
+      
+      setPosts((prev) => (reset ? mergedPosts : [...prev, ...incomingPosts]));
       setNextCursor(data.nextCursor ?? null);
       setFeedStatus("ready");
       
@@ -206,6 +261,7 @@ export default function FeedPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address: viewerAddress }),
+        credentials: "include",
       });
 
       if (!challengeRes.ok) {
@@ -215,25 +271,26 @@ export default function FeedPage() {
       const { challenge } = await challengeRes.json();
       const { id: challengeId, text: challengeText } = challenge;
 
-      // Step 2: Sign challenge with wallet
-      // eth_personal_sign works with either a plain string or a hex message;
-      // some wallets expect the raw text, so avoid manual hex conversion which
-      // was causing invalid signatures in practice. See discussion in audit.
+      // Step 2: Sign challenge with wallet using Privy's provider
       let signature: string | null = null;
 
-      if (window.ethereum) {
-        try {
-          // some providers accept the raw challenge text directly
-          signature = await window.ethereum.request({
-            method: 'personal_sign',
-            params: [challengeText, viewerAddress],
-          }) as string;
-        } catch (err) {
-          console.warn("Signing failed:", err);
-          throw new Error("Failed to sign with wallet. Please approve the signing request.");
-        }
-      } else {
-        throw new Error("Wallet not available. Please ensure your wallet is connected.");
+      // Find the connected wallet from Privy
+      const wallet = wallets.find(w => w.address.toLowerCase() === viewerAddress.toLowerCase());
+      
+      if (!wallet) {
+        throw new Error("No wallet found. Please reconnect your wallet.");
+      }
+
+      try {
+        // Get the Privy-managed provider for this wallet
+        const provider = await wallet.getEthereumProvider();
+        signature = await provider.request({
+          method: 'personal_sign',
+          params: [challengeText, viewerAddress],
+        }) as string;
+      } catch (err) {
+        console.warn("Signing failed:", err);
+        throw new Error("Failed to sign with wallet. Please approve the signing request.");
       }
 
       if (!signature) {
@@ -245,6 +302,7 @@ export default function FeedPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: challengeId, address: viewerAddress, signature }),
+        credentials: "include",
       });
 
       if (!authRes.ok) {
@@ -252,6 +310,7 @@ export default function FeedPage() {
         throw new Error(errorData.error || "Failed to authenticate with Lens");
       }
 
+      console.log("[Lens] Authentication successful!");
       setIsLensAuthenticated(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Lens authentication failed";
@@ -337,21 +396,61 @@ export default function FeedPage() {
     setPosts((prev) => [optimisticPost, ...prev]);
 
     try {
-      const res = await fetch("/api/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, media: mediaUrls }),
-      });
-      const data = await res.json();
+      const postWithRetry = async (retryCount = 0): Promise<{ ok: boolean; data: Record<string, unknown> }> => {
+        const res = await fetch("/api/posts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content, media: mediaUrls }),
+          credentials: "include",
+        });
+        const data = await res.json();
+        console.log("[Post] Response:", res.status, data);
 
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to publish post");
+        // If we get an auth error, try refreshing the token once
+        if ((res.status === 401 || (data.error && data.error.includes("Unauthenticated"))) && retryCount === 0) {
+          console.log("[Post] Auth error, attempting token refresh...");
+          const refreshRes = await fetch("/api/lens/refresh", {
+            method: "POST",
+            credentials: "include",
+          });
+          if (refreshRes.ok) {
+            console.log("[Post] Token refreshed, retrying post...");
+            return postWithRetry(1);
+          } else {
+            // Refresh failed, user needs to reconnect
+            setIsLensAuthenticated(false);
+            throw new Error("Session expired. Please reconnect Lens.");
+          }
+        }
+
+        return { ok: res.ok, data };
+      };
+
+      const { ok, data } = await postWithRetry();
+
+      if (!ok) {
+        throw new Error(data.error as string || "Failed to publish post");
       }
 
-      setPosts((prev) => prev.map((post) => (post.id === tempId ? data.post : post)));
+      // Update the optimistic post with the real data
+      const returnedPost = data.post as Post;
+      setPosts((prev) => prev.map((post) => (post.id === tempId ? { ...returnedPost, optimistic: false } : post)));
+      console.log("[Post] Successfully created post:", returnedPost?.id);
+      
+      // Cache the post locally so it persists across page refresh
+      // Lens indexing can take 10-30 seconds
+      try {
+        const cachedPosts = JSON.parse(localStorage.getItem("recentPosts") || "[]") as Post[];
+        cachedPosts.unshift({ ...returnedPost, optimistic: false });
+        // Keep only last 10 recent posts
+        localStorage.setItem("recentPosts", JSON.stringify(cachedPosts.slice(0, 10)));
+      } catch {
+        // ignore localStorage errors
+      }
     } catch (e) {
       setPosts((prev) => prev.filter((post) => post.id !== tempId));
       const message = e instanceof Error ? e.message : "Failed to publish post";
+      console.error("[Post] Failed:", message);
       setError(message);
     } finally {
       setSubmitting(false);
@@ -384,6 +483,7 @@ export default function FeedPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ currentlyLiked }),
+        credentials: "include",
       });
       const data = await res.json();
       if (!res.ok) {
@@ -404,7 +504,9 @@ export default function FeedPage() {
     setReplyLoadingByPost((prev) => ({ ...prev, [postId]: true }));
 
     try {
-      const res = await fetch(`/api/posts/${postId}/replies?limit=20`);
+      const res = await fetch(`/api/posts/${postId}/replies?limit=20`, {
+        credentials: "include",
+      });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || "Failed to load replies");
@@ -439,6 +541,7 @@ export default function FeedPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
+        credentials: "include",
       });
       const data = await res.json();
       if (!res.ok) {
@@ -482,6 +585,7 @@ export default function FeedPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
+        credentials: "include",
       });
       const data = await res.json();
       if (!res.ok) {
@@ -517,6 +621,7 @@ export default function FeedPage() {
     try {
       const res = await fetch(`/api/posts/${postId}`, {
         method: "DELETE",
+        credentials: "include",
       });
       const data = await res.json();
       if (!res.ok) {
@@ -583,7 +688,7 @@ export default function FeedPage() {
 
           {isAuthReady && authenticated && (
             <div className="sticky top-0 z-20 bg-black pt-2 pb-4 -mx-6 px-6 border-b border-gray-800">
-              {checkingProfile ? (
+              {checkingProfile || checkingLensSession ? (
                 <div className="text-gray-400">Checking Lens profile...</div>
               ) : hasLensProfile ? (
                 isLensAuthenticated ? (
@@ -776,14 +881,27 @@ export default function FeedPage() {
                           <div className="mb-2 whitespace-pre-wrap break-words overflow-wrap-anywhere break-all">{post.metadata?.content}</div>
                         {post.metadata?.media && post.metadata.media.length > 0 && (
                           <div className="flex flex-wrap gap-2 mb-2">
-                            {post.metadata.media.map((url, idx) => (
-                              <img
-                                key={idx}
-                                src={url}
-                                alt="media"
-                                className="max-h-48 max-w-full rounded border border-gray-700 bg-black object-cover"
-                              />
-                            ))}
+                            {post.metadata.media.map((url, idx) => {
+                              const isVideo = /\.(mp4|webm|ogg)(\?|$)/i.test(url);
+                              if (isVideo) {
+                                return (
+                                  <video
+                                    key={idx}
+                                    src={url}
+                                    controls
+                                    className="max-h-48 max-w-full rounded border border-gray-700 bg-black object-cover"
+                                  />
+                                );
+                              }
+                              return (
+                                <img
+                                  key={idx}
+                                  src={url}
+                                  alt="media"
+                                  className="max-h-48 max-w-full rounded border border-gray-700 bg-black object-cover"
+                                />
+                              );
+                            })}
                           </div>
                         )}
                       </>

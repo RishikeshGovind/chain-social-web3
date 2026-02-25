@@ -136,7 +136,10 @@ export async function POST(req: Request) {
       throw new Error("Lens authenticate did not return tokens");
     }
 
-    const response = NextResponse.json({ success: true });
+    console.log("[Lens Auth] Got tokens, setting cookies...");
+    console.log("[Lens Auth] Access token length:", accessToken.length);
+    
+    const response = NextResponse.json({ success: true, authenticated: true });
     const secure = process.env.NODE_ENV === "production";
 
     response.cookies.set("lensAccessToken", accessToken, {
@@ -144,7 +147,7 @@ export async function POST(req: Request) {
       secure,
       sameSite: "lax",
       path: "/",
-      maxAge: 60 * 60,
+      maxAge: 60 * 60 * 24, // 24 hours instead of 1 hour
     });
 
     response.cookies.set("lensRefreshToken", refreshToken, {
@@ -155,6 +158,7 @@ export async function POST(req: Request) {
       maxAge: 60 * 60 * 24 * 30,
     });
 
+    console.log("[Lens Auth] Cookies set successfully");
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Lens authenticate error";
