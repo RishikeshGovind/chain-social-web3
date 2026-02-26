@@ -4,19 +4,29 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.lensRequest = lensRequest;
 const axios_1 = require("axios");
 function getLensApiCandidates() {
-    // the Lens network exposes a few slightly different URLs; historically
-    // we tried nearly everything, but some of the root endpoints simply reply
-    // with 405 when hit with POST.  keeping only the known good GraphQL paths
-    // cuts down on noise and speeds up retries.
+    // Lens v3 uses api.lens.xyz/graphql as the primary endpoint
     const envUrl = process.env.LENS_API_URL?.trim();
-    const urls = [
-        envUrl,
-        "https://api.lens.xyz/graphql",
-        "https://api.lens.xyz",
-        "https://api-v2.lens.dev/graphql",
-        "https://api.lens.dev/graphql",
-    ].filter((url) => !!url);
-    return Array.from(new Set(urls));
+    // Ensure URL ends with /graphql
+    const normalizeUrl = (url) => {
+        if (!url || url.length === 0)
+            return null;
+        // Remove trailing slash
+        url = url.replace(/\/$/, '');
+        // Add /graphql if not present
+        if (!url.endsWith('/graphql')) {
+            url = `${url}/graphql`;
+        }
+        return url;
+    };
+    const normalized = normalizeUrl(envUrl);
+    const defaultUrl = "https://api.lens.xyz/graphql";
+    const urls = [];
+    if (normalized)
+        urls.push(normalized);
+    if (!urls.includes(defaultUrl))
+        urls.push(defaultUrl);
+    console.log("[Lens] Using API endpoints:", urls);
+    return urls;
 }
 async function lensRequest(query, variables, accessToken) {
     const appOrigin = process.env.LENS_ORIGIN?.trim() ||
@@ -24,26 +34,29 @@ async function lensRequest(query, variables, accessToken) {
         "http://localhost:3000";
     const referer = appOrigin.endsWith("/") ? appOrigin : `${appOrigin}/`;
     const candidates = getLensApiCandidates();
+    if (candidates.length === 0) {
+        throw new Error(`Lens request failed: No endpoints available`);
+    }
     // Try primary endpoint first with shorter timeout, then fall back to others
     const primaryUrl = candidates[0];
-    if (primaryUrl) {
-        try {
-            return await makeRequest(primaryUrl, query, variables, accessToken, appOrigin, referer, 5000 // Shorter timeout for primary
-            );
-        }
-        catch (err) {
-            // if the error clearly indicates the account is still onboarding we
-            // propagate it immediately rather than continuing to hit other hosts.
-            if (err instanceof Error && err.message.includes("ONBOARDING_USER")) {
-                throw err;
-            }
-            // otherwise fall through to parallel backup attempts
-        }
+    let primaryError = null;
+    try {
+        return await makeRequest(primaryUrl, query, variables, accessToken, appOrigin, referer, 8000);
     }
-    // Try remaining endpoints in parallel with exponential backoff
+    catch (err) {
+        primaryError = err instanceof Error ? err : new Error(String(err));
+        // if the error clearly indicates the account is still onboarding we
+        // propagate it immediately rather than continuing to hit other hosts.
+        if (primaryError.message.includes("ONBOARDING_USER")) {
+            throw primaryError;
+        }
+        // otherwise fall through to backup attempts
+    }
+    // Try remaining endpoints in parallel
     const backupUrls = candidates.slice(1);
     if (backupUrls.length === 0) {
-        throw new Error(`Lens request failed: No endpoints available`);
+        // No backups, rethrow the primary error
+        throw primaryError || new Error("Lens request failed");
     }
     const results = await Promise.allSettled(backupUrls.map((url) => makeRequest(url, query, variables, accessToken, appOrigin, referer, 8000)));
     // Return first successful result
@@ -65,17 +78,20 @@ async function makeRequest(url, query, variables, accessToken, appOrigin, refere
     console.log("[Lens] POST", url, {
         query: query.replace(/\s+/g, " ").trim(),
         variables,
+        hasAccessToken: !!accessToken,
     });
+    const headers = {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Origin: appOrigin,
+        Referer: referer,
+    };
+    if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+        console.log("[Lens] Using Authorization header with token");
+    }
     const response = await axios_1.default.post(url, { query, variables }, {
-        headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            Origin: appOrigin,
-            Referer: referer,
-            ...(accessToken && {
-                Authorization: `Bearer ${accessToken}`,
-            }),
-        },
+        headers,
         timeout,
     });
     const contentType = String(response.headers["content-type"] ?? "");

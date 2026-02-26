@@ -500,7 +500,6 @@ const QUERY_VARIANTS = [
       request: {
         pageSize: getPageSize(input.limit || 20),
         ...(input.cursor ? { cursor: input.cursor } : {}),
-        ...(input.author ? { filter: { authors: [input.author] } } : {}),
       },
     }),
   },
@@ -562,7 +561,6 @@ const QUERY_VARIANTS = [
       request: {
         pageSize: getPageSize(input.limit || 20),
         ...(input.cursor ? { cursor: input.cursor } : {}),
-        ...(input.author ? { filter: { authors: [input.author] } } : {}),
       },
     }),
   },
@@ -602,7 +600,6 @@ const QUERY_VARIANTS = [
       request: {
         pageSize: getPageSize(input.limit || 20),
         ...(input.cursor ? { cursor: input.cursor } : {}),
-        ...(input.author ? { filter: { authors: [input.author] } } : {}),
       },
     }),
   },
@@ -637,7 +634,6 @@ const QUERY_VARIANTS = [
       request: {
         pageSize: getPageSize(input.limit || 20),
         ...(input.cursor ? { cursor: input.cursor } : {}),
-        ...(input.author ? { filter: { authors: [input.author] } } : {}),
       },
     }),
   },

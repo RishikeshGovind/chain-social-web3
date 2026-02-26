@@ -13,6 +13,7 @@ import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
 } from "@/lib/server/auth/lens-actor";
+import type { Post } from "@/lib/posts/types";
 
 // Helper to get Lens account address from wallet address
 async function getLensAccountAddress(walletAddress: string): Promise<string | null> {
@@ -63,6 +64,38 @@ async function getLensAccountAddress(walletAddress: string): Promise<string | nu
   }
 }
 
+function toBucket(timestamp: string, bucketMs = 2 * 60 * 1000): number {
+  const time = new Date(timestamp).getTime();
+  if (!Number.isFinite(time)) return 0;
+  return Math.floor(time / bucketMs);
+}
+
+function mergePosts(lensPosts: Post[], localPosts: Post[], limit: number): Post[] {
+  const merged = [...localPosts, ...lensPosts].sort((a, b) =>
+    b.timestamp.localeCompare(a.timestamp)
+  );
+
+  const seenIds = new Set<string>();
+  const seenSignatures = new Set<string>();
+  const deduped: Post[] = [];
+
+  for (const post of merged) {
+    if (seenIds.has(post.id)) continue;
+    seenIds.add(post.id);
+
+    const author = post.author?.address?.toLowerCase?.() ?? "";
+    const content = (post.metadata?.content ?? "").trim().toLowerCase();
+    const signature = `${author}|${content}|${toBucket(post.timestamp)}`;
+    if (seenSignatures.has(signature)) continue;
+    seenSignatures.add(signature);
+
+    deduped.push(post);
+    if (deduped.length >= Math.max(1, limit)) break;
+  }
+
+  return deduped;
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -81,6 +114,9 @@ export async function GET(req: Request) {
     if (useLensData) {
       try {
         const accessToken = await getLensAccessTokenFromCookie();
+        const resolvedAuthor = author
+          ? (await getLensAccountAddress(author)) ?? author
+          : undefined;
         if (debugSchema) {
           const schemaQuery = `
             query LensSchemaDebug {
@@ -145,13 +181,24 @@ export async function GET(req: Request) {
         const lensData = await fetchLensPosts({
           limit: boundedLimit,
           cursor,
-          author,
+          author: resolvedAuthor,
           postId,
           debug,
           accessToken: accessToken ?? undefined,
         });
+        const localData = await listPosts({
+          limit: boundedLimit,
+          cursor,
+          author,
+        });
+        const mergedPosts = mergePosts(
+          lensData.posts ?? [],
+          localData.posts ?? [],
+          boundedLimit
+        );
         return NextResponse.json({
           ...lensData,
+          posts: mergedPosts,
           source: "lens",
           ...(debug ? { usedAccessToken: !!accessToken } : {}),
         });
@@ -266,6 +313,18 @@ export async function POST(req: Request) {
           accessToken,
           media,
         });
+        // Mirror successful Lens posts to local store so they persist in UI even
+        // when Lens indexing/session is delayed.
+        try {
+          await createPost({
+            address: lensAccountAddress,
+            content: parsedContent.content,
+            username,
+            media,
+          });
+        } catch (mirrorError) {
+          console.warn("[Post API] Local mirror write failed:", mirrorError);
+        }
         console.log("[Post API] Lens post created:", post.id);
         return NextResponse.json({ success: true, post, source: "lens" });
       } catch (lensError) {

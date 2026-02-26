@@ -17,6 +17,12 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function getGraphQLTypename(value: unknown): string | null {
+  const object = asObject(value);
+  const typename = asString(object?.__typename);
+  return typename ?? null;
+}
+
 export function extractFirstResult(data: unknown): Record<string, unknown> | null {
   const object = asObject(data);
   if (!object) return null;
@@ -91,10 +97,10 @@ export function buildContentUri(content: string, media?: string[]): string {
  * This is a separate exported function so that tests can assert its shape
  * without having to actually perform any network activity.
  */
-// NOTE: Lens v3 uses `author` field (the Lens account address) instead of `feed`.
-// The `contentUri` contains the actual post content in Lens metadata format.
+// NOTE: Lens v3 derives the acting account from the access token.
+// The post payload only needs `contentUri` for this code path.
 export function buildPostRequest(
-  author: string,
+  _actorAddress: string,
   content: string,
   media?: string[]
 ): Record<string, unknown> {
@@ -180,10 +186,11 @@ export async function createLensPost(params: {
     // simulate before making network call (tests only)
     maybeSimulateOnboarding(params.content);
 
-    // Try multiple mutation variants for Lens v3 compatibility
+    // CreatePostRequest on Lens v3 must not include "author".
+    // The actor account is inferred from the bearer token context.
     const data = await executeVariants(
       [
-        // Variant 1: Simple post with just contentUri (author from token)
+        // Variant 1: post with contentUri only
         {
           query: `
             mutation Post($request: CreatePostRequest!) {
@@ -198,25 +205,6 @@ export async function createLensPost(params: {
           variables: {
             request: {
               contentUri: requestBody.contentUri,
-            },
-          },
-        },
-        // Variant 2: With author field explicitly
-        {
-          query: `
-            mutation Post($request: CreatePostRequest!) {
-              post(request: $request) {
-                ... on PostResponse { hash }
-                ... on SelfFundedTransactionRequest { reason }
-                ... on SponsoredTransactionRequest { reason }
-                ... on TransactionWillFail { reason }
-              }
-            }
-          `,
-          variables: {
-            request: {
-              contentUri: requestBody.contentUri,
-              author: params.actorAddress,
             },
           },
         },
@@ -227,15 +215,27 @@ export async function createLensPost(params: {
     const result = extractFirstResult(data);
     console.log("[Lens] Post result:", JSON.stringify(result, null, 2));
     
-    // Check for transaction request types that indicate we need to do more
-    const typename = asString(result?.__typename);
-    if (typename === "SponsoredTransactionRequest" || typename === "SelfFundedTransactionRequest") {
-      // The post was accepted but needs transaction signing
-      // For now, we treat this as success with a temporary ID
-      console.log("[Lens] Transaction request received:", typename);
-    }
-    
+    const typename = getGraphQLTypename(result);
+    const reason = asString(result?.reason);
     const hash = asString(result?.hash); // PostResponse
+
+    // Only treat finalized PostResponse as success.
+    // Returning synthetic IDs here creates phantom posts that disappear later.
+    if (!hash) {
+      if (
+        typename === "SponsoredTransactionRequest" ||
+        typename === "SelfFundedTransactionRequest" ||
+        typename === "TransactionWillFail"
+      ) {
+        throw new Error(
+          reason
+            ? `Lens post not finalized: ${reason}`
+            : "Lens post not finalized: transaction request returned without post hash"
+        );
+      }
+      throw new Error("Lens post failed: missing post hash in response");
+    }
+
     const id = hash ? hash : `lens-${crypto.randomUUID()}`;
 
     const post: Post = {

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import Link from "next/link";
-import { deduplicatedRequest } from "@/lib/request-deduplicator";
+import { clearDeduplicationCache, deduplicatedRequest } from "@/lib/request-deduplicator";
 import { retryWithBackoff } from "@/lib/retry-backoff";
 import { compressImages, getFileSize, getCompressionRatio } from "@/lib/image-compression";
 
@@ -55,6 +55,7 @@ const MAX_POST_LENGTH = 280;
 
 export default function FeedPage() {
     const [hasLensProfile, setHasLensProfile] = useState<boolean | null>(null);
+    const [lensAccountAddress, setLensAccountAddress] = useState<string | null>(null);
     const [checkingProfile, setCheckingProfile] = useState(false);
     const [showMintPrompt, setShowMintPrompt] = useState(false);
     const [isLensAuthenticated, setIsLensAuthenticated] = useState(false);
@@ -110,6 +111,16 @@ export default function FeedPage() {
   }, [authenticated]);
 
   useEffect(() => {
+    try {
+      if (localStorage.getItem("lensAuthenticated") === "1") {
+        setIsLensAuthenticated(true);
+      }
+    } catch {
+      // ignore storage access errors
+    }
+  }, []);
+
+  useEffect(() => {
     // Check for Lens profile after wallet connect
     if (viewerAddress && isAuthReady && authenticated) {
       setCheckingProfile(true);
@@ -117,19 +128,23 @@ export default function FeedPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address: viewerAddress }),
+        cache: "no-store",
       })
         .then(res => res.json())
         .then(data => {
           setHasLensProfile(data.hasProfile);
+          setLensAccountAddress(typeof data.accountAddress === "string" ? data.accountAddress : null);
           setShowMintPrompt(!data.hasProfile);
         })
         .catch(() => {
           setHasLensProfile(false);
+          setLensAccountAddress(null);
           setShowMintPrompt(true);
         })
         .finally(() => setCheckingProfile(false));
     } else {
       setHasLensProfile(null);
+      setLensAccountAddress(null);
       setShowMintPrompt(false);
     }
   }, [viewerAddress, isAuthReady, authenticated]);
@@ -142,14 +157,25 @@ export default function FeedPage() {
     }
 
     console.log("[Lens] Checking session...");
-    fetch("/api/lens/session", { credentials: "include" })
+    fetch("/api/lens/session", { credentials: "include", cache: "no-store" })
       .then(res => res.json())
       .then(data => {
         console.log("[Lens] Session check result:", data);
         if (data.authenticated) {
           setIsLensAuthenticated(true);
+          try {
+            localStorage.setItem("lensAuthenticated", "1");
+          } catch {
+            // ignore storage access errors
+          }
           console.log("[Lens] Session restored successfully");
         } else {
+          try {
+            localStorage.removeItem("lensAuthenticated");
+          } catch {
+            // ignore storage access errors
+          }
+          setIsLensAuthenticated(false);
           console.log("[Lens] No valid session found, reason:", data.reason);
         }
       })
@@ -188,7 +214,7 @@ export default function FeedPage() {
 
       // Deduplicate identical requests to prevent race conditions
       const data = await deduplicatedRequest(url, () =>
-        retryWithBackoff(() => fetch(url, { credentials: "include" }).then((res) => res.json()), {
+        retryWithBackoff(() => fetch(url, { credentials: "include", cache: "no-store" }).then((res) => res.json()), {
           maxAttempts: 2,
           initialDelayMs: 300,
           maxDelayMs: 2000,
@@ -200,33 +226,7 @@ export default function FeedPage() {
       }
 
       const incomingPosts = data.posts ?? [];
-      
-      // Merge with cached recent posts (for Lens indexing delay)
-      // Only do this on initial load (reset=true)
-      let mergedPosts = incomingPosts;
-      if (reset) {
-        try {
-          const cachedPosts = JSON.parse(localStorage.getItem("recentPosts") || "[]") as Post[];
-          // Filter out cached posts older than 5 minutes (should be indexed by then)
-          const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
-          const recentCached = cachedPosts.filter(p => {
-            const postTime = new Date(p.timestamp).getTime();
-            return postTime > fiveMinutesAgo;
-          });
-          // Update localStorage with filtered posts
-          if (recentCached.length !== cachedPosts.length) {
-            localStorage.setItem("recentPosts", JSON.stringify(recentCached));
-          }
-          // Merge: add cached posts that aren't already in the feed
-          const incomingIds = new Set(incomingPosts.map(p => p.id));
-          const uniqueCached = recentCached.filter(p => !incomingIds.has(p.id));
-          mergedPosts = [...uniqueCached, ...incomingPosts];
-        } catch {
-          // ignore localStorage errors
-        }
-      }
-      
-      setPosts((prev) => (reset ? mergedPosts : [...prev, ...incomingPosts]));
+      setPosts((prev) => (reset ? incomingPosts : [...prev, ...incomingPosts]));
       setNextCursor(data.nextCursor ?? null);
       setFeedStatus("ready");
       
@@ -312,6 +312,11 @@ export default function FeedPage() {
 
       console.log("[Lens] Authentication successful!");
       setIsLensAuthenticated(true);
+      try {
+        localStorage.setItem("lensAuthenticated", "1");
+      } catch {
+        // ignore storage access errors
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Lens authentication failed";
       setError(message);
@@ -419,6 +424,11 @@ export default function FeedPage() {
           } else {
             // Refresh failed, user needs to reconnect
             setIsLensAuthenticated(false);
+            try {
+              localStorage.removeItem("lensAuthenticated");
+            } catch {
+              // ignore storage access errors
+            }
             throw new Error("Session expired. Please reconnect Lens.");
           }
         }
@@ -435,18 +445,9 @@ export default function FeedPage() {
       // Update the optimistic post with the real data
       const returnedPost = data.post as Post;
       setPosts((prev) => prev.map((post) => (post.id === tempId ? { ...returnedPost, optimistic: false } : post)));
+      clearDeduplicationCache();
       console.log("[Post] Successfully created post:", returnedPost?.id);
       
-      // Cache the post locally so it persists across page refresh
-      // Lens indexing can take 10-30 seconds
-      try {
-        const cachedPosts = JSON.parse(localStorage.getItem("recentPosts") || "[]") as Post[];
-        cachedPosts.unshift({ ...returnedPost, optimistic: false });
-        // Keep only last 10 recent posts
-        localStorage.setItem("recentPosts", JSON.stringify(cachedPosts.slice(0, 10)));
-      } catch {
-        // ignore localStorage errors
-      }
     } catch (e) {
       setPosts((prev) => prev.filter((post) => post.id !== tempId));
       const message = e instanceof Error ? e.message : "Failed to publish post";
@@ -651,7 +652,7 @@ export default function FeedPage() {
         {isAuthReady && authenticated && user?.wallet?.address ? (
           <>
             <Link
-              href={`/profile/${user.wallet.address}`}
+              href={`/profile/${lensAccountAddress ?? user.wallet.address}`}
               className="text-gray-300 hover:text-blue-400 mb-4"
             >
               Profile

@@ -1,10 +1,38 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import Link from "next/link";
 
 export default function Navbar() {
   const { login, logout, authenticated, user } = usePrivy();
+  const [lensAccountAddress, setLensAccountAddress] = useState<string | null>(null);
+
+  const walletAddress = useMemo(
+    () => user?.wallet?.address ?? "",
+    [user?.wallet?.address]
+  );
+
+  useEffect(() => {
+    if (!authenticated || !walletAddress) {
+      setLensAccountAddress(null);
+      return;
+    }
+    fetch("/api/lens/check-profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: walletAddress }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setLensAccountAddress(
+          typeof data?.accountAddress === "string" ? data.accountAddress : null
+        );
+      })
+      .catch(() => {
+        setLensAccountAddress(null);
+      });
+  }, [authenticated, walletAddress]);
 
 
   return (
@@ -15,7 +43,7 @@ export default function Navbar() {
         {authenticated && user?.wallet?.address && (
           <>
             <Link
-              href={`/profile/${user.wallet.address}`}
+              href={`/profile/${lensAccountAddress ?? user.wallet.address}`}
               className="text-sm text-blue-400 hover:underline"
             >
               Profile

@@ -21,6 +21,11 @@ function asObject(value) {
 function asString(value) {
     return typeof value === "string" ? value : null;
 }
+function getGraphQLTypename(value) {
+    const object = asObject(value);
+    const typename = asString(object?.__typename);
+    return typename ?? null;
+}
 function extractFirstResult(data) {
     const object = asObject(data);
     if (!object)
@@ -53,9 +58,29 @@ async function executeVariants(variants, accessToken) {
 // embed it as a `data:` URI so no external upload is required. The object is
 // simple enough for most feed consumers, and it keeps the example self‑contained.
 function buildContentUri(content, media) {
-    const metadata = { content };
+    // Build Lens v3 compatible metadata structure
+    const metadata = {
+        $schema: "https://json-schemas.lens.dev/publications/text-only/3.0.0.json",
+        lens: {
+            mainContentFocus: "TEXT_ONLY",
+            content,
+            locale: "en",
+            id: crypto.randomUUID(),
+        },
+    };
     if (media && media.length > 0) {
-        metadata.media = media.map((url) => ({ url, mimeType: "image/jpeg" }));
+        metadata.lens = {
+            ...metadata.lens,
+            mainContentFocus: "IMAGE",
+            image: {
+                item: media[0],
+                type: "image/jpeg",
+            },
+            attachments: media.map((url) => ({
+                item: url,
+                type: "image/jpeg",
+            })),
+        };
     }
     const json = JSON.stringify(metadata);
     return `data:application/json,${encodeURIComponent(json)}`;
@@ -66,15 +91,11 @@ function buildContentUri(content, media) {
  * This is a separate exported function so that tests can assert its shape
  * without having to actually perform any network activity.
  */
-// NOTE: the Lens schema has evolved several times.  The current
-// `CreatePostRequest` input expects a `feed` (EvmAddress) field rather than
-// a profile ID or content directly.  We still build the `contentUri` here,
-// but everything else is left intentionally minimal so future schema changes
-// will be easier to adapt.
-function buildPostRequest(feed, content, media) {
+// NOTE: Lens v3 derives the acting account from the access token.
+// The post payload only needs `contentUri` for this code path.
+function buildPostRequest(_actorAddress, content, media) {
     const contentUri = buildContentUri(content, media);
     const requestBody = {
-        feed,
         contentUri,
     };
     // there are additional optional fields (quoteOf, commentOn, rules, etc.)
@@ -121,31 +142,54 @@ function maybeSimulateOnboarding(content) {
 }
 async function createLensPost(params) {
     try {
-        // feed corresponds to the wallet address that will receive the post
-        // in its GraphQL feed.  previously we fetched a Lens profile id but the
-        // schema now uses a raw EVM address.
+        // Build the request body - author is derived from the access token
         const requestBody = buildPostRequest(params.actorAddress, params.content, params.media);
         // debug: log shape once to aid diagnosing schema mismatches during development
-        console.log("[Lens] createPost request fields:", Object.keys(requestBody));
+        console.log("[Lens] createPost request:", JSON.stringify(requestBody, null, 2));
+        console.log("[Lens] createPost actorAddress:", params.actorAddress);
+        console.log("[Lens] createPost accessToken exists:", !!params.accessToken);
+        console.log("[Lens] createPost accessToken preview:", params.accessToken.slice(0, 30) + "...");
         // simulate before making network call (tests only)
         maybeSimulateOnboarding(params.content);
+        // CreatePostRequest on Lens v3 must not include "author".
+        // The actor account is inferred from the bearer token context.
         const data = await executeVariants([
+            // Variant 1: post with contentUri only
             {
                 query: `
             mutation Post($request: CreatePostRequest!) {
               post(request: $request) {
                 ... on PostResponse { hash }
-                ... on PostOperationValidationFailed { reason }
+                ... on SelfFundedTransactionRequest { reason }
+                ... on SponsoredTransactionRequest { reason }
+                ... on TransactionWillFail { reason }
               }
             }
           `,
                 variables: {
-                    request: requestBody,
+                    request: {
+                        contentUri: requestBody.contentUri,
+                    },
                 },
             },
         ], params.accessToken);
         const result = extractFirstResult(data);
+        console.log("[Lens] Post result:", JSON.stringify(result, null, 2));
+        const typename = getGraphQLTypename(result);
+        const reason = asString(result?.reason);
         const hash = asString(result?.hash); // PostResponse
+        // Only treat finalized PostResponse as success.
+        // Returning synthetic IDs here creates phantom posts that disappear later.
+        if (!hash) {
+            if (typename === "SponsoredTransactionRequest" ||
+                typename === "SelfFundedTransactionRequest" ||
+                typename === "TransactionWillFail") {
+                throw new Error(reason
+                    ? `Lens post not finalized: ${reason}`
+                    : "Lens post not finalized: transaction request returned without post hash");
+            }
+            throw new Error("Lens post failed: missing post hash in response");
+        }
         const id = hash ? hash : `lens-${crypto.randomUUID()}`;
         const post = {
             id,
@@ -169,18 +213,21 @@ async function createLensPost(params) {
             try {
                 // simulate again for second attempt
                 maybeSimulateOnboarding(params.content);
+                const contentUri = buildContentUri(params.content, params.media);
                 const retryData = await executeVariants([
                     {
                         query: `
                 mutation Post($request: CreatePostRequest!) {
                   post(request: $request) {
                     ... on PostResponse { hash }
-                    ... on PostOperationValidationFailed { reason }
+                    ... on SelfFundedTransactionRequest { reason }
+                    ... on SponsoredTransactionRequest { reason }
+                    ... on TransactionWillFail { reason }
                   }
                 }
               `,
                         variables: {
-                            request: buildPostRequest(params.actorAddress, params.content, params.media),
+                            request: { contentUri },
                         },
                     },
                 ], params.accessToken);
