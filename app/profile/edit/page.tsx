@@ -10,12 +10,28 @@ export default function EditProfilePage() {
   const [website, setWebsite] = useState("");
   const [coverImage, setCoverImage] = useState("");
   const [avatar, setAvatar] = useState("");
+  const [lensAccountAddress, setLensAccountAddress] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const { user } = usePrivy();
   const router = useRouter();
 
   useEffect(() => {
     if (!user?.wallet?.address) return;
+    fetch("/api/lens/check-profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: user.wallet.address }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setLensAccountAddress(
+          typeof data?.accountAddress === "string" ? data.accountAddress : null
+        );
+      })
+      .catch(() => {
+        setLensAccountAddress(null);
+      });
+
     fetch(`/api/lens/profile?address=${user.wallet.address}`)
       .then(res => res.json())
       .then(data => {
@@ -50,7 +66,7 @@ export default function EditProfilePage() {
     setSaved(true);
     setTimeout(() => {
       setSaved(false);
-      router.push(`/profile/${walletAddress}`);
+      router.push(`/profile/${lensAccountAddress ?? walletAddress}`);
     }, 1200);
   }
 

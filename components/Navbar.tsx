@@ -1,92 +1,39 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { useState } from "react";
 import Link from "next/link";
 
 export default function Navbar() {
-  const { login, logout, authenticated, user, signMessage } = usePrivy();
-  const [loading, setLoading] = useState(false);
+  const { login, logout, authenticated, user } = usePrivy();
+  const [lensAccountAddress, setLensAccountAddress] = useState<string | null>(null);
 
-  const walletAddress = user?.wallet?.address;
+  const walletAddress = useMemo(
+    () => user?.wallet?.address ?? "",
+    [user?.wallet?.address]
+  );
 
-  const handleLensAuth = async () => {
-    if (!walletAddress) {
-      alert("Wallet not ready yet");
+  useEffect(() => {
+    if (!authenticated || !walletAddress) {
+      setLensAccountAddress(null);
       return;
     }
-
-    setLoading(true);
-
-    try {
-      // 1️⃣ Get challenge
-      const challengeRes = await fetch("/api/lens/challenge", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ address: walletAddress }),
+    fetch("/api/lens/check-profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: walletAddress }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setLensAccountAddress(
+          typeof data?.accountAddress === "string" ? data.accountAddress : null
+        );
+      })
+      .catch(() => {
+        setLensAccountAddress(null);
       });
+  }, [authenticated, walletAddress]);
 
-      const challengeData = await challengeRes.json();
-
-      if (!challengeRes.ok) {
-        throw new Error(challengeData.error || "Challenge failed");
-      }
-
-      const { id, text } = challengeData as { id: string | null; text?: string };
-
-      if (!text) {
-        throw new Error("Challenge text missing");
-      }
-
-      // 2️⃣ Sign challenge text
-      const signedMessageResult = await signMessage({
-        message: text,
-      });
-      const signature =
-        typeof signedMessageResult === "string"
-          ? signedMessageResult
-          : typeof signedMessageResult === "object" &&
-              signedMessageResult !== null &&
-              "signature" in signedMessageResult &&
-              typeof (signedMessageResult as { signature?: unknown }).signature === "string"
-            ? (signedMessageResult as { signature: string }).signature
-            : null;
-
-      if (!signature) {
-        throw new Error("Wallet signature was not returned");
-      }
-
-      // 3️⃣ Authenticate
-      const authRes = await fetch("/api/lens/authenticate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: id ?? undefined,
-          address: walletAddress,
-          signature,
-        }),
-      });
-
-      const result = await authRes.json();
-
-      if (!authRes.ok) {
-        throw new Error(result.error || "Authentication failed");
-      }
-
-      alert("Lens authenticated successfully 🚀");
-
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Lens authentication failed";
-      console.error(message);
-      alert(`Lens authentication failed ❌\n${message}`);
-    }
-
-    setLoading(false);
-  };
 
   return (
     <nav className="border-b border-gray-800 px-4 py-3 flex justify-between items-center">
@@ -96,27 +43,14 @@ export default function Navbar() {
         {authenticated && user?.wallet?.address && (
           <>
             <Link
-              href={`/profile/${user.wallet.address}`}
+              href={`/profile/${lensAccountAddress ?? user.wallet.address}`}
               className="text-sm text-blue-400 hover:underline"
             >
-              My Profile
+              Profile
             </Link>
-            <Link
-              href="/profile/edit"
-              className="text-sm text-blue-400 hover:underline"
-            >
-              Edit Profile
-            </Link>
-            <button
-              onClick={handleLensAuth}
-              disabled={loading}
-              className="border border-gray-600 px-3 py-1 rounded-lg text-sm"
-            >
-              {loading ? "Connecting..." : "Connect Lens"}
-            </button>
             <button
               onClick={logout}
-              className="border border-gray-600 px-3 py-1 rounded-lg text-sm"
+              className="text-sm text-gray-400 hover:text-red-400"
             >
               Logout
             </button>

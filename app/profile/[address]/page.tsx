@@ -54,11 +54,25 @@ export default function UserProfilePage({ params }: { params: { address: string 
     setLoading(true);
     setError(null);
 
-    Promise.all([
-      fetch(`/api/posts?author=${params.address}&limit=50`).then((res) => res.json()),
-      fetch(`/api/lens/profile?address=${params.address}`).then((res) => res.json()),
-      fetch(`/api/follows/${params.address}`).then((res) => res.json()),
-    ])
+    fetch("/api/lens/check-profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: params.address }),
+      cache: "no-store",
+    })
+      .then((res) => res.json())
+      .catch(() => ({ hasProfile: false }))
+      .then((accountData) => {
+        const resolvedAuthor =
+          typeof accountData?.accountAddress === "string" && accountData.accountAddress
+            ? accountData.accountAddress
+            : params.address;
+        return Promise.all([
+          fetch(`/api/posts?author=${resolvedAuthor}&limit=50`, { cache: "no-store" }).then((res) => res.json()),
+          fetch(`/api/lens/profile?address=${params.address}`, { cache: "no-store" }).then((res) => res.json()),
+          fetch(`/api/follows/${params.address}`, { cache: "no-store" }).then((res) => res.json()),
+        ]);
+      })
       .then(([postsData, profileData, followData]) => {
         setPosts(postsData.posts || []);
         if (profileData.profile) {
@@ -137,7 +151,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
           )}
           <div className="absolute left-1/2 transform -translate-x-1/2 top-24 z-10">
             <img
-              src={`https://api.dicebear.com/7.x/bottts/svg?seed=${params.address}`}
+              src={avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${params.address}`}
               alt="avatar"
               className="w-32 h-32 rounded-full border-4 border-black shadow-xl bg-white"
             />

@@ -9,18 +9,30 @@ type GraphQLResponse<TData> = {
 };
 
 function getLensApiCandidates() {
+  // Lens v3 uses api.lens.xyz/graphql as the primary endpoint
   const envUrl = process.env.LENS_API_URL?.trim();
-  const urls = [
-    envUrl,
-    "https://api.lens.xyz",
-    "https://api.lens.xyz/graphql",
-    "https://api-v2.lens.dev/",
-    "https://api-v2.lens.dev/graphql",
-    "https://api.lens.dev/graphql",
-    "https://api.lens.dev/",
-  ].filter((url): url is string => !!url);
+  
+  // Ensure URL ends with /graphql
+  const normalizeUrl = (url: string | undefined): string | null => {
+    if (!url || url.length === 0) return null;
+    // Remove trailing slash
+    url = url.replace(/\/$/, '');
+    // Add /graphql if not present
+    if (!url.endsWith('/graphql')) {
+      url = `${url}/graphql`;
+    }
+    return url;
+  };
+  
+  const normalized = normalizeUrl(envUrl);
+  const defaultUrl = "https://api.lens.xyz/graphql";
+  
+  const urls: string[] = [];
+  if (normalized) urls.push(normalized);
+  if (!urls.includes(defaultUrl)) urls.push(defaultUrl);
 
-  return Array.from(new Set(urls));
+  console.log("[Lens] Using API endpoints:", urls);
+  return urls;
 }
 
 export async function lensRequest<TData = Record<string, unknown>, TVariables = Record<string, unknown>>(
@@ -35,58 +47,131 @@ export async function lensRequest<TData = Record<string, unknown>, TVariables = 
   const referer = appOrigin.endsWith("/") ? appOrigin : `${appOrigin}/`;
 
   const candidates = getLensApiCandidates();
-  const failures: string[] = [];
+  
+  if (candidates.length === 0) {
+    throw new Error(`Lens request failed: No endpoints available`);
+  }
+  
+  // Try primary endpoint first with shorter timeout, then fall back to others
+  const primaryUrl = candidates[0];
+  let primaryError: Error | null = null;
+  
+  try {
+    return await makeRequest<TData>(
+      primaryUrl,
+      query,
+      variables,
+      accessToken,
+      appOrigin,
+      referer,
+      8000
+    );
+  } catch (err) {
+    primaryError = err instanceof Error ? err : new Error(String(err));
+    // if the error clearly indicates the account is still onboarding we
+    // propagate it immediately rather than continuing to hit other hosts.
+    if (primaryError.message.includes("ONBOARDING_USER")) {
+      throw primaryError;
+    }
+    // otherwise fall through to backup attempts
+  }
 
-  for (const lensApi of candidates) {
-    try {
-      const response = await axios.post<GraphQLResponse<TData>>(
-        lensApi,
-        {
-          query,
-          variables,
-        },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            Origin: appOrigin,
-            Referer: referer,
-            ...(accessToken && {
-              Authorization: `Bearer ${accessToken}`,
-            }),
-          },
-          timeout: 12_000,
-        }
-      );
+  // Try remaining endpoints in parallel
+  const backupUrls = candidates.slice(1);
+  if (backupUrls.length === 0) {
+    // No backups, rethrow the primary error
+    throw primaryError || new Error("Lens request failed");
+  }
 
-      const contentType = String(response.headers["content-type"] ?? "");
-      const isJsonLike =
-        contentType.includes("application/json") ||
-        contentType.includes("application/graphql-response+json") ||
-        contentType.includes("+json");
-      if (!isJsonLike) {
-        failures.push(`${lensApi}: non-JSON response (${contentType || "unknown content-type"})`);
-        continue;
-      }
+  const results = await Promise.allSettled(
+    backupUrls.map((url) =>
+      makeRequest<TData>(
+        url,
+        query,
+        variables,
+        accessToken,
+        appOrigin,
+        referer,
+        8000
+      )
+    )
+  );
 
-      if (response.data.errors && response.data.errors.length > 0) {
-        const message = response.data.errors[0]?.message ?? "Lens GraphQL request failed";
-        failures.push(`${lensApi}: ${message}`);
-        continue;
-      }
-
-      if (!response.data.data) {
-        const preview = JSON.stringify(response.data).slice(0, 200);
-        failures.push(`${lensApi}: missing data (${preview || "empty response"})`);
-        continue;
-      }
-
-      return response.data.data;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown request error";
-      failures.push(`${lensApi}: ${message}`);
+  // Return first successful result
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      return result.value;
     }
   }
 
-  throw new Error(`Lens request failed across endpoints. ${failures.join(" | ")}`);
+  // All failed – inspect for onboarding-specific message first
+  const failures = results.map((r) =>
+    r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : 'unknown'
+  );
+
+  const onboarding = failures.find((m) => m.includes("ONBOARDING_USER"));
+  if (onboarding) {
+    throw new Error(onboarding);
+  }
+
+  throw new Error(`Lens request failed across all endpoints: ${failures.join(' | ')}`);
+}
+
+async function makeRequest<TData>(
+  url: string,
+  query: string,
+  variables: unknown,
+  accessToken: string | undefined,
+  appOrigin: string,
+  referer: string,
+  timeout: number
+): Promise<TData> {
+// debug output to help track schema mismatches at each endpoint
+  console.log("[Lens] POST", url, {
+    query: query.replace(/\s+/g, " ").trim(),
+    variables,
+    hasAccessToken: !!accessToken,
+  });
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    Origin: appOrigin,
+    Referer: referer,
+  };
+  
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+    console.log("[Lens] Using Authorization header with token");
+  }
+
+  const response = await axios.post<GraphQLResponse<TData>>( 
+    url,
+    { query, variables },
+    {
+      headers,
+      timeout,
+    }
+  );
+
+  const contentType = String(response.headers["content-type"] ?? "");
+  const isJsonLike =
+    contentType.includes("application/json") ||
+    contentType.includes("application/graphql-response+json") ||
+    contentType.includes("+json");
+  if (!isJsonLike) {
+    throw new Error(`non-JSON response (${contentType || "unknown content-type"})`);
+  }
+
+  if (response.data.errors && response.data.errors.length > 0) {
+    const message = response.data.errors[0]?.message ?? "Lens GraphQL request failed";
+    throw new Error(message);
+  }
+
+  if (!response.data.data) {
+    const preview = JSON.stringify(response.data).slice(0, 200);
+    throw new Error(`missing data (${preview || "empty response"})`);
+  }
+
+  return response.data.data;
 }

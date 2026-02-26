@@ -5,6 +5,7 @@ import {
   parseAndValidateContent,
 } from "@/lib/posts/content";
 import { createPost, listPosts } from "@/lib/posts/store";
+import { validateMediaUrls } from "@/lib/posts/validation";
 import { fetchLensPosts } from "@/lib/lens/feed";
 import { createLensPost } from "@/lib/lens/writes";
 import { lensRequest } from "@/lib/lens";
@@ -12,6 +13,88 @@ import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
 } from "@/lib/server/auth/lens-actor";
+import type { Post } from "@/lib/posts/types";
+
+// Helper to get Lens account address from wallet address
+async function getLensAccountAddress(walletAddress: string): Promise<string | null> {
+  try {
+    const data = await lensRequest<{
+      accountsAvailable: {
+        items: Array<{
+          __typename: string;
+          account?: { address: string };
+        }>;
+      };
+    }>(
+      `
+        query AccountsAvailable($request: AccountsAvailableRequest!) {
+          accountsAvailable(request: $request) {
+            items {
+              __typename
+              ... on AccountOwned {
+                account {
+                  address
+                }
+              }
+              ... on AccountManaged {
+                account {
+                  address
+                }
+              }
+            }
+          }
+        }
+      `,
+      {
+        request: {
+          managedBy: walletAddress,
+          includeOwned: true,
+        },
+      }
+    );
+
+    const items = data?.accountsAvailable?.items ?? [];
+    // Prefer AccountOwned over AccountManaged
+    const owned = items.find((i) => i.__typename === "AccountOwned");
+    const managed = items.find((i) => i.__typename === "AccountManaged");
+    const account = owned ?? managed;
+    return account?.account?.address ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function toBucket(timestamp: string, bucketMs = 2 * 60 * 1000): number {
+  const time = new Date(timestamp).getTime();
+  if (!Number.isFinite(time)) return 0;
+  return Math.floor(time / bucketMs);
+}
+
+function mergePosts(lensPosts: Post[], localPosts: Post[], limit: number): Post[] {
+  const merged = [...localPosts, ...lensPosts].sort((a, b) =>
+    b.timestamp.localeCompare(a.timestamp)
+  );
+
+  const seenIds = new Set<string>();
+  const seenSignatures = new Set<string>();
+  const deduped: Post[] = [];
+
+  for (const post of merged) {
+    if (seenIds.has(post.id)) continue;
+    seenIds.add(post.id);
+
+    const author = post.author?.address?.toLowerCase?.() ?? "";
+    const content = (post.metadata?.content ?? "").trim().toLowerCase();
+    const signature = `${author}|${content}|${toBucket(post.timestamp)}`;
+    if (seenSignatures.has(signature)) continue;
+    seenSignatures.add(signature);
+
+    deduped.push(post);
+    if (deduped.length >= Math.max(1, limit)) break;
+  }
+
+  return deduped;
+}
 
 export async function GET(req: Request) {
   try {
@@ -31,6 +114,9 @@ export async function GET(req: Request) {
     if (useLensData) {
       try {
         const accessToken = await getLensAccessTokenFromCookie();
+        const resolvedAuthor = author
+          ? (await getLensAccountAddress(author)) ?? author
+          : undefined;
         if (debugSchema) {
           const schemaQuery = `
             query LensSchemaDebug {
@@ -95,13 +181,24 @@ export async function GET(req: Request) {
         const lensData = await fetchLensPosts({
           limit: boundedLimit,
           cursor,
-          author,
+          author: resolvedAuthor,
           postId,
           debug,
           accessToken: accessToken ?? undefined,
         });
+        const localData = await listPosts({
+          limit: boundedLimit,
+          cursor,
+          author,
+        });
+        const mergedPosts = mergePosts(
+          lensData.posts ?? [],
+          localData.posts ?? [],
+          boundedLimit
+        );
         return NextResponse.json({
           ...lensData,
+          posts: mergedPosts,
           source: "lens",
           ...(debug ? { usedAccessToken: !!accessToken } : {}),
         });
@@ -172,19 +269,13 @@ export async function POST(req: Request) {
       typeof body?.author?.username?.localName === "string"
         ? body.author.username.localName.trim().slice(0, 32)
         : undefined;
-    let media = Array.isArray(body?.media) ? body.media.filter((url) => typeof url === "string") : undefined;
-    // Basic backend validation for media URLs
-    if (media && media.length > 0) {
-      media = media.filter((url) => url.startsWith("http://") || url.startsWith("https://"));
-      if (media.length > 4) {
-        return NextResponse.json({ error: "Max 4 images per post." }, { status: 400 });
-      }
-      for (const url of media) {
-        if (!/\.(jpg|jpeg|png|gif|webp)$/i.test(url.split('?')[0])) {
-          return NextResponse.json({ error: "Only image URLs are allowed." }, { status: 400 });
-        }
-      }
+
+    // Validate media using shared helper so we can write tests.
+    const mediaValidation = validateMediaUrls(body?.media);
+    if (!mediaValidation.ok) {
+      return NextResponse.json({ error: mediaValidation.error }, { status: 400 });
     }
+    const media = mediaValidation.urls.length > 0 ? mediaValidation.urls : undefined;
 
     const useLensData =
       process.env.LENS_POSTS_SOURCE === "lens" ||
@@ -192,6 +283,9 @@ export async function POST(req: Request) {
 
     if (useLensData) {
       const accessToken = await getLensAccessTokenFromCookie();
+      console.log("[Post API] Has access token:", !!accessToken);
+      console.log("[Post API] Access token preview:", accessToken ? `${accessToken.slice(0, 20)}...` : "none");
+      
       if (!accessToken) {
         return NextResponse.json(
           { error: "Lens access token missing. Reconnect Lens." },
@@ -199,32 +293,56 @@ export async function POST(req: Request) {
         );
       }
 
-      // Fetch profileId for actorAddress
-      let profileId = undefined;
-      try {
-        const profileRes = await fetch(`${process.env.LENS_API_URL}/profiles?ownedBy=${actorAddress}`);
-        const profileData = await profileRes.json();
-        profileId = profileData?.data?.profiles?.items?.[0]?.id;
-      } catch (profileError) {
-        console.error("Failed to fetch Lens profileId:", profileError);
-      }
-      if (!profileId) {
-        return NextResponse.json({ error: "Lens profile not found for address." }, { status: 400 });
+      // Lens v3 requires the Lens account address (not wallet address) for posting
+      // Look up the user's Lens account address first
+      const lensAccountAddress = await getLensAccountAddress(actorAddress);
+      console.log("[Post API] Lens account address:", lensAccountAddress);
+      
+      if (!lensAccountAddress) {
+        return NextResponse.json(
+          { error: "You must mint a Lens profile before posting." },
+          { status: 403 }
+        );
       }
 
       try {
+        console.log("[Post API] Creating Lens post...");
         const post = await createLensPost({
           content: parsedContent.content,
-          actorAddress,
+          actorAddress: lensAccountAddress, // Use Lens account address, not wallet
           accessToken,
-          profileId,
           media,
         });
+        // Mirror successful Lens posts to local store so they persist in UI even
+        // when Lens indexing/session is delayed.
+        try {
+          await createPost({
+            address: lensAccountAddress,
+            content: parsedContent.content,
+            username,
+            media,
+          });
+        } catch (mirrorError) {
+          console.warn("[Post API] Local mirror write failed:", mirrorError);
+        }
+        console.log("[Post API] Lens post created:", post.id);
         return NextResponse.json({ success: true, post, source: "lens" });
       } catch (lensError) {
-        console.warn(
-          "Lens post mutation failed, falling back to local store:",
-          lensError instanceof Error ? lensError.message : "unknown error"
+        const errorMsg = lensError instanceof Error ? lensError.message : "unknown error";
+        console.error("[Post API] Lens post mutation failed:", errorMsg);
+        
+        if (lensError instanceof Error && lensError.name === "LensOnboardingError") {
+          // inform client about onboarding requirement
+          return NextResponse.json(
+            { error: "You must mint a Lens profile before posting." },
+            { status: 403 }
+          );
+        }
+        
+        // Return the actual Lens error instead of silently falling back
+        return NextResponse.json(
+          { error: `Lens post failed: ${errorMsg}`, lensError: errorMsg },
+          { status: 500 }
         );
       }
     }

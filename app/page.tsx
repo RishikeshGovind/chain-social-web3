@@ -22,7 +22,7 @@ export default function HomePage() {
             <h2 className="font-semibold text-xl mb-2">How does it work?</h2>
             <ul className="list-disc pl-5 text-gray-400 space-y-1">
               <li>No email or password needed—just connect your crypto wallet to get started.</li>
-              <li>Every post and profile is stored on a decentralized network, not on a company's server.</li>
+              <li>Every post and profile is stored on a decentralized network, not on a company&apos;s server.</li>
               <li>You control your data and identity. You can even use your profile on other Lens-powered apps.</li>
               <li>Anyone can view the public feed. To post, simply connect your wallet and claim your Lens profile (free for new users).</li>
             </ul>
@@ -31,8 +31,8 @@ export default function HomePage() {
             <h2 className="font-semibold text-xl mb-2">Why is this different?</h2>
             <ul className="list-disc pl-5 text-gray-400 space-y-1">
               <li><span className="text-green-400">No ads, no tracking, no selling your data.</span></li>
-              <li>Open-source and censorship-resistant: your voice can't be silenced by a company.</li>
-              <li>Bring your friends—anyone can join, even if they've never used web3 before!</li>
+              <li>Open-source and censorship-resistant: your voice can&apos;t be silenced by a company.</li>
+              <li>Bring your friends—anyone can join, even if they&apos;ve never used web3 before!</li>
             </ul>
           </div>
         </div>

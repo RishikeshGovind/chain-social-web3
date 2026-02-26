@@ -67,14 +67,15 @@ function compareDesc(a: { timestamp: string; id: string }, b: { timestamp: strin
 }
 
 function withReplyCounts(posts: Post[], replies: Reply[]) {
-  const counts = replies.reduce<Record<string, number>>((acc, reply) => {
-    acc[reply.postId] = (acc[reply.postId] ?? 0) + 1;
-    return acc;
-  }, {});
+  // Use Map for O(1) lookups instead of object
+  const counts = new Map<string, number>();
+  for (const reply of replies) {
+    counts.set(reply.postId, (counts.get(reply.postId) ?? 0) + 1);
+  }
 
   return posts.map((post) => ({
     ...post,
-    replyCount: counts[post.id] ?? 0,
+    replyCount: counts.get(post.id) ?? 0,
   }));
 }
 
