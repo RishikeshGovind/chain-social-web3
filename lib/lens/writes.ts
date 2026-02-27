@@ -308,59 +308,69 @@ export async function createLensReply(params: {
   actorAddress: string;
   accessToken: string;
 }) {
-  // replies currently still accept raw `content`, but if the API adds a
-  // contentUri requirement we can piggy‑back the same helper above. For now
-  // we just keep the existing variants.
-  const data = await executeVariants(
-    [
-      {
-        query: `
-          mutation Comment($request: CreateCommentRequest!) {
-            comment(request: $request) {
-              id
-            }
+  const contentUri = buildContentUri(params.content);
+  const variants: MutationVariant[] = [
+    {
+      query: `
+        mutation Post($request: CreatePostRequest!) {
+          post(request: $request) {
+            ... on PostResponse { hash }
+            ... on SelfFundedTransactionRequest { reason }
+            ... on SponsoredTransactionRequest { reason }
+            ... on TransactionWillFail { reason }
           }
-        `,
-        variables: {
-          request: {
-            publicationId: params.postId,
-            content: params.content,
-          },
+        }
+      `,
+      variables: {
+        request: {
+          contentUri,
+          commentOn: { post: params.postId },
         },
       },
-      {
-        query: `
-          mutation Reply($request: CreateReplyRequest!) {
-            reply(request: $request) {
-              id
-            }
-          }
-        `,
-        variables: {
-          request: {
-            post: params.postId,
-            content: params.content,
-          },
-        },
-      },
-    ],
-    params.accessToken
-  );
-
-  const result = extractFirstResult(data);
-  const id = asString(result?.id) ?? `lens-reply-${crypto.randomUUID()}`;
-
-  const reply: Reply = {
-    id,
-    postId: params.postId,
-    timestamp: new Date().toISOString(),
-    metadata: { content: params.content },
-    author: {
-      address: normalizeAddress(params.actorAddress),
     },
-  };
+  ];
 
-  return reply;
+  let data: Record<string, unknown> | null = null;
+  const errors: string[] = [];
+
+  for (const variant of variants) {
+    try {
+      data = await lensRequest<Record<string, unknown>, Record<string, unknown>>(
+        variant.query,
+        variant.variables,
+        params.accessToken
+      );
+      const result = extractFirstResult(data);
+      const id = asString(result?.id) ?? asString(result?.hash);
+      if (id) {
+        const reply: Reply = {
+          id,
+          postId: params.postId,
+          timestamp: new Date().toISOString(),
+          metadata: { content: params.content },
+          author: {
+            address: normalizeAddress(params.actorAddress),
+          },
+        };
+        return reply;
+      }
+
+      const reason = asString(result?.reason);
+      if (reason) {
+        errors.push(`Lens reply not finalized: ${reason}`);
+        continue;
+      }
+
+      errors.push("Lens reply failed: missing id/hash in response");
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : "Lens reply failed");
+    }
+  }
+
+  const uniqueErrors = [...new Set(errors)];
+  throw new Error(
+    uniqueErrors.length > 0 ? uniqueErrors.join(" | ") : "Lens reply failed"
+  );
 }
 
 export async function toggleLensLike(params: {

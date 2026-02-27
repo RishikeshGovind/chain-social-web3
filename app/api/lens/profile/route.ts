@@ -2,10 +2,20 @@
 
 import { NextResponse } from "next/server";
 import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
-import { normalizeAddress } from "@/lib/posts/content";
+import { isValidAddress, normalizeAddress } from "@/lib/posts/content";
 
 // In-memory user profile store (resets on server restart)
-const profiles: Record<string, { displayName?: string; bio?: string; location?: string; website?: string; coverImage?: string }> = {};
+const profiles: Record<
+  string,
+  {
+    displayName?: string;
+    bio?: string;
+    location?: string;
+    website?: string;
+    coverImage?: string;
+    avatar?: string;
+  }
+> = {};
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -18,21 +28,58 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
+    const body = await req.json();
     const actorAddress = await getActorAddressFromLensCookie();
-    if (!actorAddress) {
+    const requestedAddress =
+      typeof body?.address === "string" && isValidAddress(body.address)
+        ? normalizeAddress(body.address)
+        : null;
+    const requestedLensAccount =
+      typeof body?.lensAccountAddress === "string" && isValidAddress(body.lensAccountAddress)
+        ? normalizeAddress(body.lensAccountAddress)
+        : null;
+
+    if (!actorAddress && !requestedAddress) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { displayName, bio, location, website, coverImage } = await req.json();
-    const address = normalizeAddress(actorAddress);
-    profiles[address] = {
-      displayName: typeof displayName === "string" ? displayName : profiles[address]?.displayName || "",
-      bio: typeof bio === "string" ? bio : profiles[address]?.bio || "",
-      location: typeof location === "string" ? location : profiles[address]?.location || "",
-      website: typeof website === "string" ? website : profiles[address]?.website || "",
-      coverImage: typeof coverImage === "string" ? coverImage : profiles[address]?.coverImage || "",
+    const primaryAddress = actorAddress
+      ? normalizeAddress(actorAddress)
+      : (requestedAddress as string);
+    const aliases = new Set<string>([primaryAddress]);
+    if (requestedAddress) aliases.add(requestedAddress);
+    if (requestedLensAccount) aliases.add(requestedLensAccount);
+
+    const nextProfile = {
+      displayName:
+        typeof body?.displayName === "string"
+          ? body.displayName
+          : profiles[primaryAddress]?.displayName || "",
+      bio: typeof body?.bio === "string" ? body.bio : profiles[primaryAddress]?.bio || "",
+      location:
+        typeof body?.location === "string"
+          ? body.location
+          : profiles[primaryAddress]?.location || "",
+      website:
+        typeof body?.website === "string"
+          ? body.website
+          : profiles[primaryAddress]?.website || "",
+      coverImage:
+        typeof body?.coverImage === "string"
+          ? body.coverImage
+          : profiles[primaryAddress]?.coverImage || "",
+      avatar:
+        typeof body?.avatar === "string"
+          ? body.avatar
+          : profiles[primaryAddress]?.avatar || "",
     };
-    return NextResponse.json({ success: true, profile: profiles[address] });
+
+    // Keep profile reachable by both wallet and Lens-account routes.
+    for (const key of aliases) {
+      profiles[key] = nextProfile;
+    }
+
+    return NextResponse.json({ success: true, profile: nextProfile });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to update profile";
     return NextResponse.json({ error: message }, { status: 500 });

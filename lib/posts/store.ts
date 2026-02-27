@@ -284,11 +284,6 @@ export async function createReply(params: {
   username?: string;
 }) {
   const store = await loadStore();
-  const parentPost = store.posts.find((post) => post.id === params.postId);
-
-  if (!parentPost) {
-    return { type: "not_found" as const };
-  }
 
   const reply: Reply = {
     id: crypto.randomUUID(),
@@ -302,6 +297,45 @@ export async function createReply(params: {
   };
 
   store.replies.unshift(reply);
+  await saveStore(store);
+
+  return {
+    type: "ok" as const,
+    reply,
+    replyCount: store.replies.filter((item) => item.postId === params.postId).length,
+  };
+}
+
+export async function upsertReply(params: {
+  id: string;
+  postId: string;
+  address: string;
+  content: string;
+  username?: string;
+  timestamp?: string;
+}) {
+  const store = await loadStore();
+  const normalizedAddress = normalizeAddress(params.address);
+  const ts = params.timestamp ?? new Date().toISOString();
+
+  const existingIndex = store.replies.findIndex((item) => item.id === params.id);
+  const reply: Reply = {
+    id: params.id,
+    postId: params.postId,
+    timestamp: ts,
+    metadata: { content: params.content },
+    author: {
+      address: normalizedAddress,
+      ...(params.username ? { username: { localName: params.username.slice(0, 32) } } : {}),
+    },
+  };
+
+  if (existingIndex >= 0) {
+    store.replies[existingIndex] = reply;
+  } else {
+    store.replies.unshift(reply);
+  }
+  store.replies.sort(compareDesc);
   await saveStore(store);
 
   return {

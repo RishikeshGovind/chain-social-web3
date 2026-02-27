@@ -42,6 +42,19 @@ type Reply = {
   };
 };
 
+function isReply(value: unknown): value is Reply {
+  if (!value || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    typeof obj.id === "string" &&
+    typeof obj.postId === "string" &&
+    typeof obj.timestamp === "string" &&
+    !!obj.author &&
+    typeof obj.author === "object" &&
+    typeof (obj.author as Record<string, unknown>).address === "string"
+  );
+}
+
 type FeedResponse = {
   posts?: Post[];
   nextCursor?: string | null;
@@ -50,8 +63,54 @@ type FeedResponse = {
   lensFallbackError?: string;
 };
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
 const MAX_POST_LENGTH = 280;
+
+function comparePostsDesc(a: Post, b: Post): number {
+  if (a.timestamp === b.timestamp) {
+    return b.id.localeCompare(a.id);
+  }
+  return b.timestamp.localeCompare(a.timestamp);
+}
+
+function sanitizeDisplayContent(raw?: string): string {
+  if (!raw) return "";
+
+  return raw
+    .replace(/<\/*imagedata\b[^>]*>/gi, "")
+    .replace(/<\/*image\b[^>]*>/gi, "")
+    .replace(/!\[[^\]]*]\([^)]+\)/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+const URL_SPLIT_REGEX = /(https?:\/\/[^\s]+)/gi;
+
+function renderContentWithWrappedLinks(raw?: string) {
+  const content = sanitizeDisplayContent(raw);
+  if (!content) return "";
+
+  const parts = content.split(URL_SPLIT_REGEX);
+  return parts.map((part, index) => {
+    if (/^https?:\/\/[^\s]+$/i.test(part)) {
+      return (
+        <span key={`url-${index}`} className="break-all text-blue-300">
+          {part}
+        </span>
+      );
+    }
+    return <span key={`txt-${index}`}>{part}</span>;
+  });
+}
+
+function getMediaKind(url: string): "video" | "gif" | "image" {
+  if (/[?&]__media=video(\b|&|$)/i.test(url)) return "video";
+  if (/[?&]__media=gif(\b|&|$)/i.test(url)) return "gif";
+  if (/\.(mp4|webm|ogg|mov|m4v)(\?|$)/i.test(url)) return "video";
+  if (/\.(gif)(\?|$)/i.test(url)) return "gif";
+  if (/\/(video|videos)\//i.test(url)) return "video";
+  return "image";
+}
 
 export default function FeedPage() {
     const [hasLensProfile, setHasLensProfile] = useState<boolean | null>(null);
@@ -68,6 +127,7 @@ export default function FeedPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const nextCursorRef = useRef<string | null>(null);
   const loadingMoreRef = useRef(false);
+  const loadMoreAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const [newPost, setNewPost] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -226,7 +286,14 @@ export default function FeedPage() {
       }
 
       const incomingPosts = data.posts ?? [];
-      setPosts((prev) => (reset ? incomingPosts : [...prev, ...incomingPosts]));
+      setPosts((prev) => {
+        const merged = reset ? incomingPosts : [...prev, ...incomingPosts];
+        const deduped = new Map<string, Post>();
+        for (const post of merged) {
+          deduped.set(post.id, post);
+        }
+        return Array.from(deduped.values()).sort(comparePostsDesc);
+      });
       setNextCursor(data.nextCursor ?? null);
       setFeedStatus("ready");
       
@@ -248,6 +315,24 @@ export default function FeedPage() {
 
   useEffect(() => {
     void fetchPosts({ reset: true });
+  }, [fetchPosts]);
+
+  useEffect(() => {
+    const anchor = loadMoreAnchorRef.current;
+    if (!anchor) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting) return;
+        if (!nextCursorRef.current || loadingMoreRef.current) return;
+        void fetchPosts({ reset: false });
+      },
+      { rootMargin: "300px 0px" }
+    );
+
+    observer.observe(anchor);
+    return () => observer.disconnect();
   }, [fetchPosts]);
 
   async function handleLensAuth() {
@@ -538,26 +623,64 @@ export default function FeedPage() {
     setError(null);
 
     try {
-      const res = await fetch(`/api/posts/${postId}/replies`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to post reply");
+      const replyWithRetry = async (
+        retryCount = 0
+      ): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> => {
+        const res = await fetch(`/api/posts/${postId}/replies`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+          credentials: "include",
+        });
+        const data = await res.json();
+
+        // If Lens session expired, refresh once and retry.
+        if (
+          (res.status === 401 ||
+            (typeof data.error === "string" && data.error.includes("Unauthenticated"))) &&
+          retryCount === 0
+        ) {
+          const refreshRes = await fetch("/api/lens/refresh", {
+            method: "POST",
+            credentials: "include",
+          });
+          if (refreshRes.ok) {
+            return replyWithRetry(1);
+          }
+
+          setIsLensAuthenticated(false);
+          try {
+            localStorage.removeItem("lensAuthenticated");
+          } catch {
+            // ignore storage access errors
+          }
+          throw new Error("Session expired. Please reconnect Lens.");
+        }
+
+        return { ok: res.ok, status: res.status, data };
+      };
+
+      const { ok, data } = await replyWithRetry();
+      if (!ok) {
+        throw new Error((data.error as string) || "Failed to post reply");
       }
+      const createdReply = data.reply;
+      if (!isReply(createdReply)) {
+        throw new Error("Failed to post reply");
+      }
+      const replyCountFromApi =
+        typeof data.replyCount === "number" ? data.replyCount : undefined;
 
       setReplyDraftByPost((prev) => ({ ...prev, [postId]: "" }));
       setRepliesByPost((prev) => ({
         ...prev,
-        [postId]: [data.reply, ...(prev[postId] ?? [])],
+        [postId]: [createdReply, ...(prev[postId] ?? [])],
       }));
+      await fetchReplies(postId);
       setPosts((prev) =>
         prev.map((post) =>
           post.id === postId
-            ? { ...post, replyCount: data.replyCount ?? (post.replyCount ?? 0) + 1 }
+            ? { ...post, replyCount: replyCountFromApi ?? (post.replyCount ?? 0) + 1 }
             : post
         )
       );
@@ -688,7 +811,7 @@ export default function FeedPage() {
           <h2 className="text-2xl font-semibold mb-6">Global Feed</h2>
 
           {isAuthReady && authenticated && (
-            <div className="sticky top-0 z-20 bg-black pt-2 pb-4 -mx-6 px-6 border-b border-gray-800">
+            <div className="bg-black pt-2 pb-4 -mx-6 px-6 border-b border-gray-800">
               {checkingProfile || checkingLensSession ? (
                 <div className="text-gray-400">Checking Lens profile...</div>
               ) : hasLensProfile ? (
@@ -810,7 +933,7 @@ export default function FeedPage() {
                   <Link href={`/profile/${post.author.address}`} className="shrink-0">
                     {/* Profile picture removed, only mini avatar will show next to username */}
                   </Link>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <div className="flex items-center gap-2">
                         <img
@@ -879,28 +1002,51 @@ export default function FeedPage() {
                       </div>
                     ) : (
                       <>
-                          <div className="mb-2 whitespace-pre-wrap break-words overflow-wrap-anywhere break-all">{post.metadata?.content}</div>
+                          <div className="mb-2 whitespace-pre-wrap break-words">
+                            {renderContentWithWrappedLinks(post.metadata?.content)}
+                          </div>
                         {post.metadata?.media && post.metadata.media.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mb-2">
+                          <div
+                            className={`mb-2 ${
+                              post.metadata.media.length === 1
+                                ? "max-w-xl"
+                                : "grid grid-cols-2 gap-2"
+                            }`}
+                          >
                             {post.metadata.media.map((url, idx) => {
-                              const isVideo = /\.(mp4|webm|ogg)(\?|$)/i.test(url);
-                              if (isVideo) {
+                              const mediaKind = getMediaKind(url);
+                              const isSingle = post.metadata!.media!.length === 1;
+                              const frameClass = isSingle
+                                ? "overflow-hidden rounded-xl border border-gray-700 bg-black"
+                                : "overflow-hidden rounded-xl border border-gray-700 bg-black aspect-square";
+
+                              if (mediaKind === "video") {
                                 return (
-                                  <video
-                                    key={idx}
-                                    src={url}
-                                    controls
-                                    className="max-h-48 max-w-full rounded border border-gray-700 bg-black object-cover"
-                                  />
+                                  <div key={idx} className={frameClass}>
+                                    <video
+                                      src={url}
+                                      controls
+                                      className={isSingle ? "w-full max-h-96 object-contain" : "w-full h-full object-cover"}
+                                    />
+                                  </div>
                                 );
                               }
                               return (
-                                <img
-                                  key={idx}
-                                  src={url}
-                                  alt="media"
-                                  className="max-h-48 max-w-full rounded border border-gray-700 bg-black object-cover"
-                                />
+                                <div key={idx} className={frameClass}>
+                                  <img
+                                    src={url}
+                                    alt="media"
+                                    className={
+                                      mediaKind === "gif"
+                                        ? isSingle
+                                          ? "w-full max-h-96 object-contain"
+                                          : "w-full h-full object-contain"
+                                        : isSingle
+                                          ? "w-full max-h-96 object-cover"
+                                          : "w-full h-full object-cover"
+                                    }
+                                  />
+                                </div>
                               );
                             })}
                           </div>
@@ -976,7 +1122,9 @@ export default function FeedPage() {
                                 {new Date(reply.timestamp).toLocaleString()}
                               </span>
                             </div>
-                            <div className="text-sm whitespace-pre-wrap">{reply.metadata?.content}</div>
+                            <div className="text-sm whitespace-pre-wrap break-words">
+                              {renderContentWithWrappedLinks(reply.metadata?.content)}
+                            </div>
                           </div>
                         ))}
 
@@ -992,7 +1140,8 @@ export default function FeedPage() {
           </div>
 
           {nextCursor && (
-            <div className="flex justify-center mt-8">
+            <div className="flex flex-col items-center mt-8 gap-3">
+              <div ref={loadMoreAnchorRef} className="h-1 w-full" />
               <button
                 onClick={() => void fetchPosts({ reset: false })}
                 disabled={loadingMore}

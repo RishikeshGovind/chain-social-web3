@@ -13,7 +13,6 @@ import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
 } from "@/lib/server/auth/lens-actor";
-import type { Post } from "@/lib/posts/types";
 
 // Helper to get Lens account address from wallet address
 async function getLensAccountAddress(walletAddress: string): Promise<string | null> {
@@ -62,38 +61,6 @@ async function getLensAccountAddress(walletAddress: string): Promise<string | nu
   } catch {
     return null;
   }
-}
-
-function toBucket(timestamp: string, bucketMs = 2 * 60 * 1000): number {
-  const time = new Date(timestamp).getTime();
-  if (!Number.isFinite(time)) return 0;
-  return Math.floor(time / bucketMs);
-}
-
-function mergePosts(lensPosts: Post[], localPosts: Post[], limit: number): Post[] {
-  const merged = [...localPosts, ...lensPosts].sort((a, b) =>
-    b.timestamp.localeCompare(a.timestamp)
-  );
-
-  const seenIds = new Set<string>();
-  const seenSignatures = new Set<string>();
-  const deduped: Post[] = [];
-
-  for (const post of merged) {
-    if (seenIds.has(post.id)) continue;
-    seenIds.add(post.id);
-
-    const author = post.author?.address?.toLowerCase?.() ?? "";
-    const content = (post.metadata?.content ?? "").trim().toLowerCase();
-    const signature = `${author}|${content}|${toBucket(post.timestamp)}`;
-    if (seenSignatures.has(signature)) continue;
-    seenSignatures.add(signature);
-
-    deduped.push(post);
-    if (deduped.length >= Math.max(1, limit)) break;
-  }
-
-  return deduped;
 }
 
 export async function GET(req: Request) {
@@ -186,19 +153,8 @@ export async function GET(req: Request) {
           debug,
           accessToken: accessToken ?? undefined,
         });
-        const localData = await listPosts({
-          limit: boundedLimit,
-          cursor,
-          author,
-        });
-        const mergedPosts = mergePosts(
-          lensData.posts ?? [],
-          localData.posts ?? [],
-          boundedLimit
-        );
         return NextResponse.json({
           ...lensData,
-          posts: mergedPosts,
           source: "lens",
           ...(debug ? { usedAccessToken: !!accessToken } : {}),
         });
