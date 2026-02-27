@@ -2,7 +2,7 @@
 
 import { lensRequest } from "../lens";
 import { normalizeAddress } from "../posts/content";
-import type { Post } from "../posts/types";
+import type { Post, Reply } from "../posts/types";
 
 type LensFetchInput = {
   limit: number;
@@ -17,6 +17,11 @@ type LensFeedOutput = {
   posts: Post[];
   nextCursor: string | null;
   debugMetadata?: unknown[];
+};
+
+type LensRepliesOutput = {
+  replies: Reply[];
+  nextCursor: string | null;
 };
 // cache may store either the raw text or a parsed JSON object
 const metadataContentCache = new Map<string, unknown>();
@@ -65,7 +70,9 @@ function deepFindText(value: unknown): string | null {
 
     if (typeof current === "string") {
       const trimmed = current.trim();
-      if (trimmed && !isLikelyUrl(trimmed)) {
+      const looksLikeMetadataType = /^[A-Za-z]+Metadata$/.test(trimmed);
+      const looksLikeTypename = /^Media(Image|Video|Audio)$/.test(trimmed);
+      if (trimmed && !isLikelyUrl(trimmed) && !looksLikeMetadataType && !looksLikeTypename) {
         return trimmed;
       }
       continue;
@@ -86,7 +93,10 @@ function deepFindText(value: unknown): string | null {
       }
     }
 
-    queue.push(...Object.values(object));
+    for (const [key, nestedValue] of Object.entries(object)) {
+      if (key === "__typename") continue;
+      queue.push(nestedValue);
+    }
   }
 
   return null;
@@ -195,6 +205,17 @@ function extractMediaFromMetadata(metadata: unknown): string[] {
   const obj = asObject(metadata);
   if (!obj) return urls;
 
+  const withKind = (url: string, kind: "image" | "video" | "gif" = "image") => {
+    const normalized = normalizeMetadataUri(url);
+    if (!normalized) return;
+    if (kind === "image") {
+      urls.push(normalized);
+      return;
+    }
+    const separator = normalized.includes("?") ? "&" : "?";
+    urls.push(`${normalized}${separator}__media=${kind}`);
+  };
+
   // Direct media array (common in Lens v2)
   const mediaArray = obj.media;
   if (Array.isArray(mediaArray)) {
@@ -203,7 +224,16 @@ function extractMediaFromMetadata(metadata: unknown): string[] {
       const url = typeof item === 'string' 
         ? item 
         : asString(asObject(item)?.url) ?? asString(asObject(item)?.item);
-      if (url) urls.push(normalizeMetadataUri(url));
+      const itemType = asString(asObject(item)?.type)?.toLowerCase() ?? "";
+      if (url) {
+        if (itemType.includes("video")) {
+          withKind(url, "video");
+        } else if (itemType.includes("gif")) {
+          withKind(url, "gif");
+        } else {
+          withKind(url, "image");
+        }
+      }
     }
   }
 
@@ -214,56 +244,66 @@ function extractMediaFromMetadata(metadata: unknown): string[] {
       const itemObj = asObject(item);
       // MediaImage and MediaVideo have 'item' field
       const url = asString(itemObj?.item) ?? asString(itemObj?.url) ?? asString(itemObj?.uri);
-      if (url) urls.push(normalizeMetadataUri(url));
+      const typename = asString(itemObj?.__typename);
+      const mediaType = asString(itemObj?.type)?.toLowerCase() ?? "";
+      if (url) {
+        if (typename === "MediaVideo" || mediaType.includes("video")) {
+          withKind(url, "video");
+        } else if (mediaType.includes("gif")) {
+          withKind(url, "gif");
+        } else {
+          withKind(url, "image");
+        }
+      }
     }
   }
 
   // image field - can be string OR object with { item, raw } (Lens v3)
   const imageField = obj.image;
   if (typeof imageField === 'string') {
-    urls.push(normalizeMetadataUri(imageField));
+    withKind(imageField, "image");
   } else if (asObject(imageField)) {
     const imageObj = asObject(imageField)!;
     const imgUrl = asString(imageObj.item) ?? asString(imageObj.raw) ?? asString(imageObj.url);
-    if (imgUrl) urls.push(normalizeMetadataUri(imgUrl));
+    if (imgUrl) withKind(imgUrl, "image");
   }
 
   // video field - can be string OR object with { item, raw } (Lens v3)
   const videoField = obj.video;
   if (typeof videoField === 'string') {
-    urls.push(normalizeMetadataUri(videoField));
+    withKind(videoField, "video");
   } else if (asObject(videoField)) {
     const videoObj = asObject(videoField)!;
     const vidUrl = asString(videoObj.item) ?? asString(videoObj.raw) ?? asString(videoObj.url);
-    if (vidUrl) urls.push(normalizeMetadataUri(vidUrl));
+    if (vidUrl) withKind(vidUrl, "video");
   }
 
   // audio field (for AudioMetadata)
   const audioField = obj.audio;
   if (typeof audioField === 'string') {
-    urls.push(normalizeMetadataUri(audioField));
+    withKind(audioField, "video");
   } else if (asObject(audioField)) {
     const audioObj = asObject(audioField)!;
     const audUrl = asString(audioObj.item) ?? asString(audioObj.raw) ?? asString(audioObj.url);
-    if (audUrl) urls.push(normalizeMetadataUri(audUrl));
+    if (audUrl) withKind(audUrl, "video");
   }
 
   // asset field (some Lens formats)
   const asset = asObject(obj.asset);
   if (asset) {
     const assetUrl = asString(asset.url) ?? asString(asset.uri) ?? asString(asset.item);
-    if (assetUrl) urls.push(normalizeMetadataUri(assetUrl));
+    if (assetUrl) withKind(assetUrl, "image");
     
     // nested image/video in asset
     const assetImage = asObject(asset.image);
     const assetVideo = asObject(asset.video);
     if (assetImage) {
       const imgUrl = asString(assetImage.item) ?? asString(assetImage.raw) ?? asString(assetImage.url);
-      if (imgUrl) urls.push(normalizeMetadataUri(imgUrl));
+      if (imgUrl) withKind(imgUrl, "image");
     }
     if (assetVideo) {
       const vidUrl = asString(assetVideo.item) ?? asString(assetVideo.raw) ?? asString(assetVideo.url);
-      if (vidUrl) urls.push(normalizeMetadataUri(vidUrl));
+      if (vidUrl) withKind(vidUrl, "video");
     }
   }
 
@@ -284,7 +324,7 @@ export async function mapNodeToPost(
   const createdAt =
     asString(object.timestamp) ??
     asString(object.createdAt) ??
-    new Date().toISOString();
+    "1970-01-01T00:00:00.000Z";
 
   const authorObj = asObject(object.author);
   const address = asString(authorObj?.address);
@@ -363,6 +403,65 @@ export async function mapNodeToPost(
           },
         }
       : {}),
+  };
+}
+
+async function mapNodeToReply(
+  node: unknown,
+  parentPostId: string
+): Promise<Reply | null> {
+  const object = asObject(node);
+  if (!object) return null;
+
+  const id = asString(object.id);
+  if (!id) return null;
+
+  const createdAt =
+    asString(object.timestamp) ??
+    asString(object.createdAt) ??
+    new Date().toISOString();
+
+  const authorObj = asObject(object.author);
+  const address = asString(authorObj?.address);
+  if (!address) return null;
+
+  const usernameObj = asObject(authorObj?.username);
+  const localName = asString(usernameObj?.localName);
+
+  const inlineMetadata = asObject(object.metadata);
+  const contentUri = asString(object.contentUri);
+  const metadataUri = asString(object.metadataUri);
+
+  let content = "";
+  let metadataRaw: unknown;
+
+  if (inlineMetadata) {
+    content = extractContent(inlineMetadata);
+  }
+
+  if (!content && contentUri) {
+    metadataRaw = await fetchMetadata(normalizeMetadataUri(contentUri));
+    content = extractContent(metadataRaw);
+  }
+
+  if (!content && metadataUri) {
+    metadataRaw = await fetchMetadata(normalizeMetadataUri(metadataUri));
+    content = extractContent(metadataRaw);
+  }
+
+  if (!content) {
+    content = asString(object.content) ?? asString(object.body) ?? "";
+  }
+
+  return {
+    id,
+    postId: parentPostId,
+    timestamp: createdAt,
+    metadata: { content },
+    author: {
+      address: normalizeAddress(address),
+      ...(localName ? { username: { localName } } : {}),
+    },
   };
 }
 
@@ -654,7 +753,10 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
         ? extracted.items.filter((post) => post.author.address === normalizedAuthor)
         : extracted.items;
       return {
-        posts: filteredItems.slice(0, Math.max(1, input.limit)),
+        // Lens PageSize is enum-based (TEN/FIFTY). When requesting limit=20,
+        // the API page is often FIFTY; slicing to 20 while using the FIFTY cursor
+        // skips 21-50 on the next page. Return the full page to avoid gaps.
+        posts: filteredItems,
         nextCursor: extracted.nextCursor,
         ...(input.debug ? { debugMetadata: extracted.debugMetadata } : {}),
       };
@@ -667,4 +769,118 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
 
   console.error("[Lens] All query variants failed:", errors);
   throw new Error(errors.join(" | "));
+}
+
+function buildPostReferencesQuery(referenceType: string, includePaging: boolean): string {
+  return `
+  query PostReferences($postId: PostId!${includePaging ? ", $cursor: Cursor, $pageSize: PageSize" : ""}) {
+    postReferences(
+      request: {
+        referencedPost: $postId
+        referenceTypes: [${referenceType}]
+        ${includePaging ? "cursor: $cursor" : ""}
+        ${includePaging ? "pageSize: $pageSize" : ""}
+      }
+    ) {
+      items {
+        __typename
+        ... on Post {
+          id
+          timestamp
+          metadata {
+            __typename
+            ... on TextOnlyMetadata { content }
+            ... on ArticleMetadata { content }
+            ... on ImageMetadata { content }
+            ... on VideoMetadata { content }
+            ... on AudioMetadata { content }
+            ... on EmbedMetadata { content }
+            ... on LinkMetadata { content }
+          }
+          author {
+            address
+            username { localName }
+          }
+        }
+      }
+      pageInfo { next }
+    }
+  }
+`;
+}
+
+export async function fetchLensReplies(input: {
+  postId: string;
+  limit: number;
+  cursor?: string;
+  accessToken?: string;
+}): Promise<LensRepliesOutput> {
+  const postId = String(input.postId ?? "").trim();
+  if (!postId) {
+    throw new Error("Lens replies query failed: postId is missing");
+  }
+
+  const referenceTypeVariants = ["REPLY", "COMMENT_ON", "COMMENT_OF", "QUOTE_OF"];
+  const queryVariants: Array<{ query: string; variables: Record<string, unknown> }> = [
+    {
+      query: buildPostReferencesQuery(referenceTypeVariants[0], true),
+      variables: {
+        postId,
+        pageSize: getPageSize(input.limit || 20),
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      },
+    },
+    {
+      query: buildPostReferencesQuery(referenceTypeVariants[0], false),
+      variables: {
+        postId,
+      },
+    },
+  ];
+  for (let i = 1; i < referenceTypeVariants.length; i += 1) {
+    queryVariants.push({
+      query: buildPostReferencesQuery(referenceTypeVariants[i], true),
+      variables: {
+        postId,
+        pageSize: getPageSize(input.limit || 20),
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      },
+    });
+    queryVariants.push({
+      query: buildPostReferencesQuery(referenceTypeVariants[i], false),
+      variables: { postId },
+    });
+  }
+
+  const errors: string[] = [];
+  for (const variant of queryVariants) {
+    try {
+      const data = await lensRequest(variant.query, variant.variables, input.accessToken);
+      const root = asObject(data);
+      const referencesObj = asObject(root?.postReferences);
+      const rawItems: unknown[] = Array.isArray(referencesObj?.items)
+        ? referencesObj!.items
+        : [];
+
+      const mapped = await Promise.all(
+        rawItems.map((item) => mapNodeToReply(item, input.postId))
+      );
+      const replies = mapped.filter((item): item is Reply => !!item);
+      const nextCursor =
+        asString(asObject(referencesObj?.pageInfo)?.next) ??
+        null;
+
+      return {
+        replies: replies.slice(0, Math.max(1, input.limit)),
+        nextCursor,
+      };
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : "Lens replies query failed");
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(errors.join(" | "));
+  }
+  return { replies: [], nextCursor: null };
 }

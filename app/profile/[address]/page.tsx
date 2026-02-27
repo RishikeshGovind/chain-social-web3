@@ -3,6 +3,7 @@
 import { notFound } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
+import Link from "next/link";
 
 type ProfilePost = {
   id: string;
@@ -26,6 +27,35 @@ function shortenAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+function sanitizeDisplayContent(raw?: string) {
+  if (!raw) return "";
+  return raw
+    .replace(/<\/*imagedata\b[^>]*>/gi, "")
+    .replace(/<\/*image\b[^>]*>/gi, "")
+    .replace(/!\[[^\]]*]\([^)]+\)/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+const URL_SPLIT_REGEX = /(https?:\/\/[^\s]+)/gi;
+
+function renderContentWithWrappedLinks(raw?: string) {
+  const content = sanitizeDisplayContent(raw);
+  if (!content) return "";
+
+  const parts = content.split(URL_SPLIT_REGEX);
+  return parts.map((part, index) => {
+    if (/^https?:\/\/[^\s]+$/i.test(part)) {
+      return (
+        <span key={`url-${index}`} className="break-all text-blue-300">
+          {part}
+        </span>
+      );
+    }
+    return <span key={`txt-${index}`}>{part}</span>;
+  });
+}
+
 export default function UserProfilePage({ params }: { params: { address: string } }) {
   const [posts, setPosts] = useState<ProfilePost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,6 +65,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
   const [website, setWebsite] = useState<string>("");
   const [coverImage, setCoverImage] = useState<string>("");
   const [avatar, setAvatar] = useState<string>("");
+  const [viewerLensAccountAddress, setViewerLensAccountAddress] = useState<string>("");
   const [followStats, setFollowStats] = useState<FollowStats>({
     followers: 0,
     following: 0,
@@ -49,6 +80,32 @@ export default function UserProfilePage({ params }: { params: { address: string 
     () => user?.wallet?.address?.toLowerCase() ?? "",
     [user?.wallet?.address]
   );
+  const targetAddress = useMemo(() => params.address.toLowerCase(), [params.address]);
+  const isOwnProfile =
+    !!targetAddress &&
+    (targetAddress === viewerAddress || targetAddress === viewerLensAccountAddress);
+
+  useEffect(() => {
+    if (!viewerAddress) {
+      setViewerLensAccountAddress("");
+      return;
+    }
+    fetch("/api/lens/check-profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: viewerAddress }),
+      cache: "no-store",
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setViewerLensAccountAddress(
+          typeof data?.accountAddress === "string" ? data.accountAddress.toLowerCase() : ""
+        );
+      })
+      .catch(() => {
+        setViewerLensAccountAddress("");
+      });
+  }, [viewerAddress]);
 
   useEffect(() => {
     setLoading(true);
@@ -164,7 +221,16 @@ export default function UserProfilePage({ params }: { params: { address: string 
           </div>
           <div className="text-blue-400 text-sm mb-2">{shortenAddress(params.address)}</div>
 
-          {!followStats.isSelf && authenticated && (
+          {isOwnProfile && (
+            <Link
+              href="/profile/edit"
+              className="mb-3 rounded-lg border border-gray-700 px-4 py-1 text-sm hover:bg-gray-900"
+            >
+              Edit Profile
+            </Link>
+          )}
+
+          {!isOwnProfile && authenticated && (
             <button
               onClick={() => void handleToggleFollow()}
               disabled={followLoading}
@@ -218,7 +284,9 @@ export default function UserProfilePage({ params }: { params: { address: string 
             <div className="space-y-4">
               {posts.map((post) => (
                 <div key={post.id} className="border border-gray-800 bg-gray-900 rounded-xl p-4">
-                  <div className="text-white mb-2 whitespace-pre-wrap">{post.metadata?.content || ""}</div>
+                  <div className="text-white mb-2 whitespace-pre-wrap break-words">
+                    {renderContentWithWrappedLinks(post.metadata?.content)}
+                  </div>
                   <div className="text-xs text-gray-500">{new Date(post.timestamp).toLocaleString()}</div>
                 </div>
               ))}
