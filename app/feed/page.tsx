@@ -6,6 +6,7 @@ import Link from "next/link";
 import { clearDeduplicationCache, deduplicatedRequest } from "@/lib/request-deduplicator";
 import { retryWithBackoff } from "@/lib/retry-backoff";
 import { compressImages, getFileSize, getCompressionRatio } from "@/lib/image-compression";
+import { readBookmarks, toggleBookmarkId } from "@/lib/client/bookmarks";
 
 type Post = {
   id: string;
@@ -23,6 +24,7 @@ type Post = {
     avatar?: string;
   };
   likes?: string[];
+  reposts?: string[];
   replyCount?: number;
   optimistic?: boolean;
 };
@@ -41,6 +43,19 @@ type Reply = {
     address: string;
   };
 };
+
+function isPost(value: unknown): value is Post {
+  if (!value || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  const author = obj.author;
+  return (
+    typeof obj.id === "string" &&
+    typeof obj.timestamp === "string" &&
+    !!author &&
+    typeof author === "object" &&
+    typeof (author as Record<string, unknown>).address === "string"
+  );
+}
 
 function isReply(value: unknown): value is Reply {
   if (!value || typeof value !== "object") return false;
@@ -154,6 +169,8 @@ export default function FeedPage() {
   const [repliesByPost, setRepliesByPost] = useState<Record<string, Reply[]>>({});
   const [replyDraftByPost, setReplyDraftByPost] = useState<Record<string, string>>({});
   const [replyLoadingByPost, setReplyLoadingByPost] = useState<Record<string, boolean>>({});
+  const [bookmarkedPostIds, setBookmarkedPostIds] = useState<string[]>([]);
+  const [sidebarSearch, setSidebarSearch] = useState("");
 
   const { authenticated, user, logout } = usePrivy();
   const { wallets } = useWallets();
@@ -178,6 +195,14 @@ export default function FeedPage() {
     } catch {
       // ignore storage access errors
     }
+  }, []);
+
+  useEffect(() => {
+    setBookmarkedPostIds(readBookmarks());
+    const onBookmarksChanged = () => setBookmarkedPostIds(readBookmarks());
+    window.addEventListener("chainsocial:bookmarks-changed", onBookmarksChanged);
+    return () =>
+      window.removeEventListener("chainsocial:bookmarks-changed", onBookmarksChanged);
   }, []);
 
   useEffect(() => {
@@ -565,22 +590,117 @@ export default function FeedPage() {
     );
 
     try {
-      const res = await fetch(`/api/posts/${postId}/likes`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentlyLiked }),
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to update like");
-      }
+      const likeWithRetry = async (
+        retryCount = 0
+      ): Promise<{ ok: boolean; data: Record<string, unknown> }> => {
+        const res = await fetch(`/api/posts/${postId}/likes`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ currentlyLiked }),
+          credentials: "include",
+        });
+        const data = await res.json();
 
-      if (data.post) {
-        setPosts((prev) => prev.map((post) => (post.id === postId ? data.post : post)));
+        if (
+          (res.status === 401 ||
+            (typeof data.error === "string" && data.error.includes("Unauthenticated"))) &&
+          retryCount === 0
+        ) {
+          const refreshRes = await fetch("/api/lens/refresh", {
+            method: "POST",
+            credentials: "include",
+          });
+          if (refreshRes.ok) return likeWithRetry(1);
+
+          setIsLensAuthenticated(false);
+          try {
+            localStorage.removeItem("lensAuthenticated");
+          } catch {
+            // ignore storage access errors
+          }
+          throw new Error("Session expired. Please reconnect Lens.");
+        }
+
+        return { ok: res.ok, data };
+      };
+
+      const { ok, data } = await likeWithRetry();
+      if (!ok) throw new Error((data.error as string) || "Failed to update like");
+      if (isPost(data.post)) {
+        const updatedPost = data.post;
+        setPosts((prev) => prev.map((post) => (post.id === postId ? updatedPost : post)));
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to update like";
+      setError(message);
+      await fetchPosts({ reset: true });
+    }
+  }
+
+  async function handleRepost(postId: string) {
+    if (!viewerAddress) return;
+
+    setError(null);
+    const currentlyReposted =
+      posts.find((post) => post.id === postId)?.reposts?.includes(viewerAddress) ?? false;
+
+    setPosts((prev) =>
+      prev.map((post) => {
+        if (post.id !== postId) return post;
+        const reposts = post.reposts ?? [];
+        const reposted = reposts.includes(viewerAddress);
+        return {
+          ...post,
+          reposts: reposted
+            ? reposts.filter((address) => address !== viewerAddress)
+            : [...reposts, viewerAddress],
+        };
+      })
+    );
+
+    try {
+      const repostWithRetry = async (
+        retryCount = 0
+      ): Promise<{ ok: boolean; data: Record<string, unknown> }> => {
+        const res = await fetch(`/api/posts/${postId}/reposts`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ currentlyReposted }),
+          credentials: "include",
+        });
+        const data = await res.json();
+
+        if (
+          (res.status === 401 ||
+            (typeof data.error === "string" && data.error.includes("Unauthenticated"))) &&
+          retryCount === 0
+        ) {
+          const refreshRes = await fetch("/api/lens/refresh", {
+            method: "POST",
+            credentials: "include",
+          });
+          if (refreshRes.ok) return repostWithRetry(1);
+
+          setIsLensAuthenticated(false);
+          try {
+            localStorage.removeItem("lensAuthenticated");
+          } catch {
+            // ignore storage access errors
+          }
+          throw new Error("Session expired. Please reconnect Lens.");
+        }
+
+        return { ok: res.ok, data };
+      };
+
+      const { ok, data } = await repostWithRetry();
+      if (!ok) throw new Error((data.error as string) || "Failed to update repost");
+      if (isPost(data.post)) {
+        const updatedPost = data.post;
+        setPosts((prev) => prev.map((post) => (post.id === postId ? updatedPost : post)));
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Failed to update repost";
       setError(message);
       await fetchPosts({ reset: true });
     }
@@ -676,7 +796,9 @@ export default function FeedPage() {
         ...prev,
         [postId]: [createdReply, ...(prev[postId] ?? [])],
       }));
-      await fetchReplies(postId);
+      if (data.status !== "pending_indexing") {
+        await fetchReplies(postId);
+      }
       setPosts((prev) =>
         prev.map((post) =>
           post.id === postId
@@ -758,52 +880,94 @@ export default function FeedPage() {
     }
   }
 
+  function handleBookmark(postId: string) {
+    setBookmarkedPostIds(toggleBookmarkId(postId));
+  }
+
   const trimmedPost = newPost.trim();
   const remainingChars = MAX_POST_LENGTH - trimmedPost.length;
   const postTooLong = remainingChars < 0;
   const canSubmit = !!viewerAddress && !!trimmedPost && !postTooLong && !submitting;
+  const profileHref =
+    isAuthReady && authenticated && user?.wallet?.address
+      ? `/profile/${lensAccountAddress ?? user.wallet.address}`
+      : null;
+
+  const sidebarItems: Array<{
+    label: string;
+    href: string;
+    active?: boolean;
+  }> = [
+    { label: "Home", href: "/feed", active: true },
+    { label: "Explore", href: "/explore" },
+    { label: "Notifications", href: "/notifications" },
+    { label: "Messages", href: "/messages" },
+    { label: "Bookmarks", href: "/bookmarks" },
+    { label: "Lists", href: "/lists" },
+    ...(profileHref ? [{ label: "Profile", href: profileHref }] : []),
+    { label: "Settings", href: "/settings" },
+  ];
+
+  const sidebarSearchResults = useMemo(() => {
+    const q = sidebarSearch.trim().toLowerCase();
+    if (!q) return [];
+    return posts
+      .filter((post) => {
+        const content = post.metadata?.content?.toLowerCase() ?? "";
+        const username = post.author.username?.localName?.toLowerCase() ?? "";
+        const address = post.author.address.toLowerCase();
+        return content.includes(q) || username.includes(q) || address.includes(q);
+      })
+      .slice(0, 8);
+  }, [posts, sidebarSearch]);
 
   return (
     <div className="min-h-screen bg-black text-white grid grid-cols-12">
       <aside className="hidden md:flex md:col-span-3 lg:col-span-2 flex-col border-r border-gray-800 py-8 px-6">
-        <Link
-          href="/feed"
-          className="text-xl font-bold mb-8 text-white hover:text-blue-400"
-        >
-          Home
-        </Link>
-        {isAuthReady && authenticated && user?.wallet?.address ? (
-          <>
-            <Link
-              href={`/profile/${lensAccountAddress ?? user.wallet.address}`}
-              className="text-gray-300 hover:text-blue-400 mb-4"
-            >
-              Profile
-            </Link>
-            <button
-              onClick={logout}
-              className="text-gray-300 hover:text-red-400 text-left"
-            >
-              Logout
-            </button>
-          </>
-        ) : (
-          <div className="text-gray-400 mt-8">
-            <p className="mb-4">Welcome to ChainSocial!</p>
-            <p className="mb-2">Sign in with your wallet to post and follow others.</p>
-            <div className="mb-2 text-xs text-gray-500">
-              <span role="img" aria-label="wallet">💳</span> Supported wallets: MetaMask, Coinbase, WalletConnect
+        <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
+          <p className="text-xl font-bold mb-6 text-white">ChainSocial</p>
+          <nav className="mb-8 space-y-1">
+            {sidebarItems.map((item) => (
+              <Link
+                key={item.label}
+                href={item.href}
+                className={`block rounded-lg px-3 py-2 transition ${
+                  item.active
+                    ? "bg-gray-900 text-white font-semibold"
+                    : "text-gray-300 hover:bg-gray-900 hover:text-white"
+                }`}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+          {isAuthReady && authenticated && user?.wallet?.address ? (
+            <>
+              <button
+                onClick={logout}
+                className="rounded-lg px-3 py-2 text-gray-300 hover:bg-gray-900 hover:text-red-400 text-left"
+              >
+                Logout
+              </button>
+            </>
+          ) : (
+            <div className="text-gray-400 mt-8">
+              <p className="mb-4">Welcome to ChainSocial!</p>
+              <p className="mb-2">Sign in with your wallet to post and follow others.</p>
+              <div className="mb-2 text-xs text-gray-500">
+                <span role="img" aria-label="wallet">💳</span> Supported wallets: MetaMask, Coinbase, WalletConnect
+              </div>
+              <Link href="https://claim.lens.xyz/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+                Mint a Lens profile
+              </Link>
+              <div className="mt-6 text-xs text-gray-500">
+                <p>Viewing public feed. No login required.</p>
+                <p className="mt-2">We use wallet login for secure, passwordless access. Your funds are never at risk.</p>
+                <Link href="/help" className="text-blue-400 hover:underline mt-2 inline-block">How wallet login works</Link>
+              </div>
             </div>
-            <Link href="https://claim.lens.xyz/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
-              Mint a Lens profile
-            </Link>
-            <div className="mt-6 text-xs text-gray-500">
-              <p>Viewing public feed. No login required.</p>
-              <p className="mt-2">We use wallet login for secure, passwordless access. Your funds are never at risk.</p>
-              <Link href="/help" className="text-blue-400 hover:underline mt-2 inline-block">How wallet login works</Link>
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </aside>
 
       <main className="col-span-12 md:col-span-9 lg:col-span-8 flex justify-center">
@@ -920,6 +1084,8 @@ export default function FeedPage() {
           <div className="space-y-4">
             {posts.map((post) => {
               const liked = (post.likes ?? []).includes(viewerAddress);
+              const reposted = (post.reposts ?? []).includes(viewerAddress);
+              const bookmarked = bookmarkedPostIds.includes(post.id);
               const isOwner = viewerAddress === post.author.address.toLowerCase();
               const isEditing = editingPostId === post.id;
               const repliesOpen = !!expandedReplies[post.id];
@@ -946,10 +1112,10 @@ export default function FeedPage() {
                           className="font-semibold hover:underline inline-block align-middle"
                         >
                           {post.author.username?.localName ||
-                            shortenAddress(post.author.address)}
+                            post.author.address}
                         </Link>
                         <span className="text-xs text-gray-500">
-                          {shortenAddress(post.author.address)}
+                          {post.author.address}
                         </span>
                         {post.optimistic && (
                           <span className="text-xs text-amber-400">Sending...</span>
@@ -1066,12 +1232,32 @@ export default function FeedPage() {
                       </button>
 
                       <button
+                        className={`flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-800 transition-colors ${reposted ? "text-green-400" : "text-gray-400"}`}
+                        onClick={() => void handleRepost(post.id)}
+                        disabled={!isAuthReady || !authenticated || post.optimistic}
+                        aria-label={reposted ? "Undo repost" : "Repost"}
+                      >
+                        <span>{reposted ? "Reposted" : "Repost"}</span>
+                        <span>{post.reposts?.length || 0}</span>
+                      </button>
+
+                      <button
                         className="flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-800 text-gray-400"
                         onClick={() => toggleReplies(post.id)}
                         disabled={post.optimistic}
                       >
                         <span>{repliesOpen ? "Hide Replies" : "Replies"}</span>
                         <span>{post.replyCount ?? 0}</span>
+                      </button>
+
+                      <button
+                        className={`flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-800 transition-colors ${
+                          bookmarked ? "text-yellow-400" : "text-gray-400"
+                        }`}
+                        onClick={() => handleBookmark(post.id)}
+                        disabled={post.optimistic}
+                      >
+                        <span>{bookmarked ? "Bookmarked" : "Bookmark"}</span>
                       </button>
 
                       <span className="text-xs text-gray-500">
@@ -1116,7 +1302,7 @@ export default function FeedPage() {
                                 href={`/profile/${reply.author.address}`}
                                 className="text-sm font-medium hover:underline"
                               >
-                                {reply.author.username?.localName || shortenAddress(reply.author.address)}
+                                {reply.author.username?.localName || reply.author.address}
                               </Link>
                               <span className="text-xs text-gray-500">
                                 {new Date(reply.timestamp).toLocaleString()}
@@ -1155,13 +1341,42 @@ export default function FeedPage() {
       </main>
 
       <aside className="hidden lg:flex lg:col-span-2 flex-col border-l border-gray-800 py-8 px-6">
-        <div>
-          <h3 className="font-bold mb-4">Trends</h3>
-          <ul className="space-y-2 text-gray-400">
-            <li>#Web3</li>
-            <li>#DeFi</li>
-            <li>#Crypto</li>
-          </ul>
+        <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
+          <div className="mb-8">
+            <h3 className="font-bold mb-3">Search</h3>
+            <input
+              value={sidebarSearch}
+              onChange={(event) => setSidebarSearch(event.target.value)}
+              placeholder="Search posts, users, wallets"
+              className="mb-3 w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white"
+            />
+            {sidebarSearch.trim().length === 0 && (
+              <p className="text-xs text-gray-500">Type to search in loaded feed posts.</p>
+            )}
+            {sidebarSearch.trim().length > 0 && sidebarSearchResults.length === 0 && (
+              <p className="text-xs text-gray-500">No matches found.</p>
+            )}
+            <div className="space-y-2">
+              {sidebarSearchResults.map((post) => (
+                <div key={post.id} className="rounded-lg border border-gray-800 bg-gray-900 p-2">
+                  <div className="mb-1 text-xs text-gray-300">
+                    {post.author.username?.localName || shortenAddress(post.author.address)}
+                  </div>
+                  <div className="line-clamp-3 text-xs text-gray-400 whitespace-pre-wrap break-words">
+                    {sanitizeDisplayContent(post.metadata?.content) || "(No text content)"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <h3 className="font-bold mb-4">Trends</h3>
+            <ul className="space-y-2 text-gray-400">
+              <li>#Web3</li>
+              <li>#DeFi</li>
+              <li>#Crypto</li>
+            </ul>
+          </div>
         </div>
       </aside>
     </div>

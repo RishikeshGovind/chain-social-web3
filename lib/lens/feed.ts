@@ -8,6 +8,7 @@ type LensFetchInput = {
   limit: number;
   cursor?: string;
   author?: string;
+  quick?: boolean;
   debug?: boolean;
   accessToken?: string;
   postId?: string;
@@ -490,7 +491,15 @@ async function extractPosts(
     const mapped = await Promise.all(
       feedObj.items
         .map((feedItem) => asObject(feedItem))
-        .map((feedItem) => mapNodeToPost(feedItem?.root ?? feedItem?.item ?? feedItem, debug))
+        .map(async (feedItem) => {
+          const mappedPost = await mapNodeToPost(feedItem?.root ?? feedItem?.item ?? feedItem, debug);
+          if (!mappedPost) return null;
+          const feedTimestamp = asString(feedItem?.timestamp);
+          if (feedTimestamp) {
+            mappedPost.post.timestamp = feedTimestamp;
+          }
+          return mappedPost;
+        })
     );
     const valid = mapped.filter((item): item is { post: Post; rawMetadata?: unknown } => !!item);
     const items = valid.map((item) => item.post);
@@ -738,25 +747,371 @@ const QUERY_VARIANTS = [
   },
 ];
 
+const FEED_QUERY_VARIANTS = [
+  {
+    query: `
+      query Feed($request: FeedRequest!) {
+        feed(request: $request) {
+          items {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              metadata {
+                __typename
+                ... on TextOnlyMetadata { content }
+                ... on ArticleMetadata { content }
+                ... on ImageMetadata { content image { item raw } }
+                ... on VideoMetadata { content video { item raw } }
+                ... on AudioMetadata { content audio { item } }
+                ... on EmbedMetadata { content }
+                ... on LinkMetadata { content }
+              }
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+            ... on FeedItem {
+              root {
+                __typename
+                ... on Post {
+                  id
+                  timestamp
+                  metadata {
+                    __typename
+                    ... on TextOnlyMetadata { content }
+                    ... on ArticleMetadata { content }
+                    ... on ImageMetadata { content image { item raw } }
+                    ... on VideoMetadata { content video { item raw } }
+                    ... on AudioMetadata { content audio { item } }
+                    ... on EmbedMetadata { content }
+                    ... on LinkMetadata { content }
+                  }
+                  author {
+                    address
+                    username { localName }
+                  }
+                  stats { comments }
+                }
+              }
+              item {
+                __typename
+                ... on Post {
+                  id
+                  timestamp
+                  metadata {
+                    __typename
+                    ... on TextOnlyMetadata { content }
+                    ... on ArticleMetadata { content }
+                    ... on ImageMetadata { content image { item raw } }
+                    ... on VideoMetadata { content video { item raw } }
+                    ... on AudioMetadata { content audio { item } }
+                    ... on EmbedMetadata { content }
+                    ... on LinkMetadata { content }
+                  }
+                  author {
+                    address
+                    username { localName }
+                  }
+                  stats { comments }
+                }
+              }
+              timestamp
+            }
+          }
+          pageInfo { next }
+        }
+      }
+    `,
+    variables: (input: LensFetchInput) => ({
+      request: {
+        filter: "GLOBAL",
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      },
+    }),
+  },
+  {
+    query: `
+      query Feed($request: FeedRequest!) {
+        feed(request: $request) {
+          items {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              metadata {
+                ... on TextOnlyMetadata { content }
+              }
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+            ... on FeedItem {
+              root {
+                __typename
+                ... on Post {
+                  id
+                  timestamp
+                  metadata {
+                    ... on TextOnlyMetadata { content }
+                  }
+                  author {
+                    address
+                    username { localName }
+                  }
+                  stats { comments }
+                }
+              }
+              item {
+                __typename
+                ... on Post {
+                  id
+                  timestamp
+                  metadata {
+                    ... on TextOnlyMetadata { content }
+                  }
+                  author {
+                    address
+                    username { localName }
+                  }
+                  stats { comments }
+                }
+              }
+              timestamp
+            }
+          }
+          pageInfo { next }
+        }
+      }
+    `,
+    variables: () => ({
+      request: {
+        filter: "GLOBAL",
+      },
+    }),
+  },
+];
+
+const AUTHOR_QUERY_VARIANTS = [
+  {
+    query: `
+      query Posts($request: PostsRequest!) {
+        posts(request: $request) {
+          items {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              metadata {
+                __typename
+                ... on TextOnlyMetadata { content }
+                ... on ArticleMetadata { content }
+                ... on ImageMetadata { content image { item raw } }
+                ... on VideoMetadata { content video { item raw } }
+                ... on AudioMetadata { content audio { item } }
+                ... on EmbedMetadata { content }
+                ... on LinkMetadata { content }
+              }
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+          }
+          pageInfo { next }
+        }
+      }
+    `,
+    variables: (input: LensFetchInput, author: string) => ({
+      request: {
+        filter: { authors: [author] },
+        pageSize: getPageSize(input.limit || 50),
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      },
+    }),
+  },
+  {
+    query: `
+      query Posts($request: PostsRequest!) {
+        posts(request: $request) {
+          items {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              metadata {
+                __typename
+                ... on TextOnlyMetadata { content }
+                ... on ArticleMetadata { content }
+                ... on ImageMetadata { content image { item raw } }
+                ... on VideoMetadata { content video { item raw } }
+                ... on AudioMetadata { content audio { item } }
+                ... on EmbedMetadata { content }
+                ... on LinkMetadata { content }
+              }
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+          }
+          pageInfo { next }
+        }
+      }
+    `,
+    variables: (input: LensFetchInput, author: string) => ({
+      request: {
+        authors: [author],
+        pageSize: getPageSize(input.limit || 50),
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      },
+    }),
+  },
+  {
+    query: `
+      query Posts($request: PostsRequest!) {
+        posts(request: $request) {
+          items {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              metadata {
+                __typename
+                ... on TextOnlyMetadata { content }
+                ... on ArticleMetadata { content }
+                ... on ImageMetadata { content image { item raw } }
+                ... on VideoMetadata { content video { item raw } }
+                ... on AudioMetadata { content audio { item } }
+                ... on EmbedMetadata { content }
+                ... on LinkMetadata { content }
+              }
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+          }
+          pageInfo { next }
+        }
+      }
+    `,
+    variables: (input: LensFetchInput, author: string) => ({
+      request: {
+        filter: { authors: [{ address: author }] },
+        pageSize: getPageSize(input.limit || 50),
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      },
+    }),
+  },
+];
+
 export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOutput> {
   const errors: string[] = [];
   const normalizedAuthor = input.author ? normalizeAddress(input.author) : null;
+  const targetCount = Math.min(Math.max(input.limit || 20, 1), 200);
+  const maxAuthorFallbackPages = input.quick ? 8 : 80;
+
+  // Global timeline should come from feed() so repost-driven items can surface.
+  // For author/post-specific fetches we keep posts() behavior.
+  if (!input.author && !input.postId) {
+    for (const variant of FEED_QUERY_VARIANTS) {
+      try {
+        const data = await lensRequest(variant.query, variant.variables(input), input.accessToken);
+        const extracted = await extractPosts(data, input.debug);
+        return {
+          posts: extracted.items,
+          nextCursor: extracted.nextCursor,
+          ...(input.debug ? { debugMetadata: extracted.debugMetadata } : {}),
+        };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "Lens feed query failed";
+        errors.push(msg);
+      }
+    }
+  }
+
+  if (normalizedAuthor) {
+    for (const variant of AUTHOR_QUERY_VARIANTS) {
+      try {
+        const data = await lensRequest(
+          variant.query,
+          variant.variables(input, normalizedAuthor),
+          input.accessToken
+        );
+        const extracted = await extractPosts(data, input.debug);
+        const filteredItems = extracted.items.filter(
+          (post) => post.author.address === normalizedAuthor
+        );
+        if (filteredItems.length > 0 || extracted.nextCursor) {
+          return {
+            posts: filteredItems.slice(0, targetCount),
+            nextCursor: extracted.nextCursor,
+            ...(input.debug ? { debugMetadata: extracted.debugMetadata } : {}),
+          };
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "Lens author query failed";
+        errors.push(msg);
+      }
+    }
+  }
 
   for (const variant of QUERY_VARIANTS) {
     try {
       console.log("[Lens] Attempting query with variant...");
+      if (normalizedAuthor) {
+        const collected: Post[] = [];
+        const seenIds = new Set<string>();
+        let cursor: string | undefined = input.cursor;
+        let nextCursor: string | null = null;
+
+        // Author filtering is client-side; page through the upstream feed so
+        // older authored posts are still discoverable.
+        for (let page = 0; page < maxAuthorFallbackPages; page += 1) {
+          const data = await lensRequest(
+            variant.query,
+            variant.variables({ ...input, cursor }),
+            input.accessToken
+          );
+          const extracted = await extractPosts(data, input.debug);
+          const filtered = extracted.items.filter(
+            (post) => post.author.address === normalizedAuthor
+          );
+
+          for (const post of filtered) {
+            if (seenIds.has(post.id)) continue;
+            seenIds.add(post.id);
+            collected.push(post);
+          }
+
+          nextCursor = extracted.nextCursor;
+          if (collected.length >= targetCount || !nextCursor) break;
+          cursor = nextCursor;
+        }
+
+        return {
+          posts: collected.slice(0, targetCount),
+          nextCursor,
+        };
+      }
+
       const data = await lensRequest(variant.query, variant.variables(input), input.accessToken);
       console.log("[Lens] Query successful, extracting posts...", data);
       const extracted = await extractPosts(data, input.debug);
       console.log("[Lens] Extracted posts:", extracted.items.length, "items");
-      const filteredItems = normalizedAuthor
-        ? extracted.items.filter((post) => post.author.address === normalizedAuthor)
-        : extracted.items;
       return {
         // Lens PageSize is enum-based (TEN/FIFTY). When requesting limit=20,
         // the API page is often FIFTY; slicing to 20 while using the FIFTY cursor
         // skips 21-50 on the next page. Return the full page to avoid gaps.
-        posts: filteredItems,
+        posts: extracted.items,
         nextCursor: extracted.nextCursor,
         ...(input.debug ? { debugMetadata: extracted.debugMetadata } : {}),
       };

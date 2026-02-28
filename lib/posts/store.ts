@@ -4,12 +4,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeAddress } from "@/lib/posts/content";
 import { canMutateOwnedResource, canToggleFollow } from "@/lib/posts/authz";
-import type { Follow, ListPostsInput, ListRepliesInput, Post, Reply } from "@/lib/posts/types";
+import type { Follow, ListPostsInput, ListRepliesInput, Post, Reply, Repost } from "@/lib/posts/types";
 
 type StoreData = {
   posts: Post[];
   replies: Reply[];
   follows: Follow[];
+  reposts: Repost[];
 };
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -25,6 +26,7 @@ const DEFAULT_POSTS: Post[] = [
       address: "0x1234567890abcdef1234567890abcdef12345678",
     },
     likes: [],
+    reposts: [],
   },
   {
     id: "2",
@@ -35,6 +37,7 @@ const DEFAULT_POSTS: Post[] = [
       address: "0xfedcba0987654321fedcba0987654321fedcba09",
     },
     likes: [],
+    reposts: [],
   },
 ];
 
@@ -79,6 +82,20 @@ function withReplyCounts(posts: Post[], replies: Reply[]) {
   }));
 }
 
+function withRepostCounts(posts: Post[], reposts: Repost[]) {
+  const repostMap = new Map<string, Set<string>>();
+  for (const repost of reposts) {
+    const set = repostMap.get(repost.postId) ?? new Set<string>();
+    set.add(repost.address);
+    repostMap.set(repost.postId, set);
+  }
+
+  return posts.map((post) => ({
+    ...post,
+    reposts: Array.from(repostMap.get(post.id) ?? []),
+  }));
+}
+
 async function persist(store: StoreData) {
   await mkdir(DATA_DIR, { recursive: true });
   await writeFile(POSTS_FILE, JSON.stringify(store, null, 2), "utf8");
@@ -94,9 +111,10 @@ async function loadStore(): Promise<StoreData> {
       posts: Array.isArray(parsed.posts) ? parsed.posts : DEFAULT_POSTS,
       replies: Array.isArray(parsed.replies) ? parsed.replies : [],
       follows: Array.isArray(parsed.follows) ? parsed.follows : [],
+      reposts: Array.isArray(parsed.reposts) ? parsed.reposts : [],
     };
   } catch {
-    cachedStore = { posts: DEFAULT_POSTS, replies: [], follows: [] };
+    cachedStore = { posts: DEFAULT_POSTS, replies: [], follows: [], reposts: [] };
     await persist(cachedStore);
   }
 
@@ -108,6 +126,7 @@ async function loadStore(): Promise<StoreData> {
         address: normalizeAddress(post.author.address),
       },
       likes: (post.likes ?? []).map((address) => normalizeAddress(address)),
+      reposts: (post.reposts ?? []).map((address) => normalizeAddress(address)),
     }))
     .sort(compareDesc);
 
@@ -125,6 +144,11 @@ async function loadStore(): Promise<StoreData> {
     ...follow,
     follower: normalizeAddress(follow.follower),
     following: normalizeAddress(follow.following),
+  }));
+
+  cachedStore.reposts = cachedStore.reposts.map((repost) => ({
+    ...repost,
+    address: normalizeAddress(repost.address),
   }));
 
   return cachedStore;
@@ -155,7 +179,8 @@ export async function listPosts({ limit, cursor, author }: ListPostsInput) {
     }
   }
 
-  const items = withReplyCounts(posts.slice(0, boundedLimit), store.replies);
+  const itemsWithReplies = withReplyCounts(posts.slice(0, boundedLimit), store.replies);
+  const items = withRepostCounts(itemsWithReplies, store.reposts);
   const nextCursor =
     items.length === boundedLimit ? encodeCursor({
       id: items[items.length - 1].id,
@@ -185,6 +210,7 @@ export async function createPost(params: {
       ...(params.username ? { username: { localName: params.username.slice(0, 32) } } : {}),
     },
     likes: [],
+    reposts: [],
   };
 
   store.posts.unshift(post);
@@ -213,10 +239,67 @@ export async function toggleLike(postId: string, actorAddress: string) {
     post: {
       ...post,
       replyCount: store.replies.filter((reply) => reply.postId === post.id).length,
+      reposts: withRepostCounts([post], store.reposts)[0]?.reposts ?? [],
     },
     liked,
     likes: post.likes.length,
   };
+}
+
+export async function toggleRepost(postId: string, actorAddress: string) {
+  const store = await loadStore();
+  const address = normalizeAddress(actorAddress);
+
+  const existingIndex = store.reposts.findIndex(
+    (item) => item.postId === postId && item.address === address
+  );
+
+  let reposted = false;
+  if (existingIndex >= 0) {
+    store.reposts.splice(existingIndex, 1);
+    reposted = false;
+  } else {
+    store.reposts.push({
+      postId,
+      address,
+      createdAt: new Date().toISOString(),
+    });
+    reposted = true;
+  }
+
+  await saveStore(store);
+
+  const post = store.posts.find((item) => item.id === postId);
+  const reposts = store.reposts
+    .filter((item) => item.postId === postId)
+    .map((item) => item.address);
+
+  return {
+    post: post
+      ? {
+          ...post,
+          replyCount: store.replies.filter((reply) => reply.postId === post.id).length,
+          reposts,
+        }
+      : null,
+    reposted,
+    reposts: reposts.length,
+  };
+}
+
+export async function getRepostsForPosts(postIds: string[]) {
+  const store = await loadStore();
+  const result = new Map<string, string[]>();
+  const idSet = new Set(postIds);
+  for (const repost of store.reposts) {
+    if (!idSet.has(repost.postId)) continue;
+    const current = result.get(repost.postId) ?? [];
+    if (!current.includes(repost.address)) {
+      current.push(repost.address);
+    }
+    result.set(repost.postId, current);
+  }
+  return result;
 }
 
 export async function editPost(postId: string, actorAddress: string, content: string) {

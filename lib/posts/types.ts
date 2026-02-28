@@ -18,6 +18,7 @@ export type Post = {
   };
   author: Author;
   likes: string[];
+  reposts?: string[];
   replyCount?: number;
 };
 
@@ -34,6 +35,12 @@ export type Reply = {
 export type Follow = {
   follower: string;
   following: string;
+  createdAt: string;
+};
+
+export type Repost = {
+  postId: string;
+  address: string;
   createdAt: string;
 };
 
