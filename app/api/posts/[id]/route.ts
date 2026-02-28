@@ -58,9 +58,11 @@ export async function PATCH(
           source: "lens",
         });
       } catch (lensError) {
-        console.warn(
-          "Lens edit mutation failed, falling back to local store:",
-          lensError instanceof Error ? lensError.message : "unknown error"
+        const message = lensError instanceof Error ? lensError.message : "unknown error";
+        console.warn("Lens edit mutation failed:", message);
+        return NextResponse.json(
+          { error: `Lens edit failed: ${message}. Edit was not published to Lens.` },
+          { status: 502 }
         );
       }
     }
@@ -115,9 +117,11 @@ export async function DELETE(
         await deleteLensPost({ postId, accessToken });
         return NextResponse.json({ success: true, source: "lens" });
       } catch (lensError) {
-        console.warn(
-          "Lens delete mutation failed, falling back to local store:",
-          lensError instanceof Error ? lensError.message : "unknown error"
+        const message = lensError instanceof Error ? lensError.message : "unknown error";
+        console.warn("Lens delete mutation failed:", message);
+        return NextResponse.json(
+          { error: `Lens delete failed: ${message}. Delete was not published to Lens.` },
+          { status: 502 }
         );
       }
     }

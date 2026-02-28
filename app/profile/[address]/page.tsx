@@ -4,16 +4,24 @@ import { notFound } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import Link from "next/link";
+import AppShell from "@/components/AppShell";
 
 type ProfilePost = {
   id: string;
   timestamp: string;
   metadata?: {
     content?: string;
+    media?: string[];
   };
   author: {
+    username?: {
+      localName?: string;
+    };
     address: string;
   };
+  likes?: string[];
+  reposts?: string[];
+  replyCount?: number;
 };
 
 type FollowStats = {
@@ -22,10 +30,6 @@ type FollowStats = {
   isFollowing: boolean;
   isSelf: boolean;
 };
-
-function shortenAddress(address: string) {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
 
 function sanitizeDisplayContent(raw?: string) {
   if (!raw) return "";
@@ -56,9 +60,22 @@ function renderContentWithWrappedLinks(raw?: string) {
   });
 }
 
+function getMediaKind(url: string): "video" | "gif" | "image" {
+  if (/[?&]__media=video(\b|&|$)/i.test(url)) return "video";
+  if (/[?&]__media=gif(\b|&|$)/i.test(url)) return "gif";
+  if (/\.(mp4|webm|ogg|mov|m4v)(\?|$)/i.test(url)) return "video";
+  if (/\.(gif)(\?|$)/i.test(url)) return "gif";
+  if (/\/(video|videos)\//i.test(url)) return "video";
+  return "image";
+}
+
 export default function UserProfilePage({ params }: { params: { address: string } }) {
   const [posts, setPosts] = useState<ProfilePost[]>([]);
+  const [postsSource, setPostsSource] = useState<"lens" | "local" | null>(null);
+  const [resolvedAuthor, setResolvedAuthor] = useState<string>("");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [displayName, setDisplayName] = useState<string>("");
   const [bio, setBio] = useState<string>("");
   const [location, setLocation] = useState<string>("");
@@ -81,6 +98,17 @@ export default function UserProfilePage({ params }: { params: { address: string 
     [user?.wallet?.address]
   );
   const targetAddress = useMemo(() => params.address.toLowerCase(), [params.address]);
+  const sortedPosts = useMemo(
+    () => [...posts].sort((a, b) => b.timestamp.localeCompare(a.timestamp)),
+    [posts]
+  );
+  const profileHandle = useMemo(() => {
+    return (
+      sortedPosts.find((post) => post.author.username?.localName)?.author.username?.localName ?? ""
+    );
+  }, [sortedPosts]);
+  const headerTitle = displayName || profileHandle || params.address;
+  const showHeaderAddressRow = !!displayName || !!profileHandle;
   const isOwnProfile =
     !!targetAddress &&
     (targetAddress === viewerAddress || targetAddress === viewerLensAccountAddress);
@@ -108,30 +136,15 @@ export default function UserProfilePage({ params }: { params: { address: string 
   }, [viewerAddress]);
 
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-
-    fetch("/api/lens/check-profile", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address: params.address }),
-      cache: "no-store",
-    })
-      .then((res) => res.json())
-      .catch(() => ({ hasProfile: false }))
-      .then((accountData) => {
-        const resolvedAuthor =
-          typeof accountData?.accountAddress === "string" && accountData.accountAddress
-            ? accountData.accountAddress
-            : params.address;
-        return Promise.all([
-          fetch(`/api/posts?author=${resolvedAuthor}&limit=50`, { cache: "no-store" }).then((res) => res.json()),
-          fetch(`/api/lens/profile?address=${params.address}`, { cache: "no-store" }).then((res) => res.json()),
-          fetch(`/api/follows/${params.address}`, { cache: "no-store" }).then((res) => res.json()),
-        ]);
-      })
-      .then(([postsData, profileData, followData]) => {
-        setPosts(postsData.posts || []);
+    let cancelled = false;
+    Promise.all([
+      fetch(`/api/lens/profile?address=${params.address}`, { cache: "no-store" }).then((res) =>
+        res.json()
+      ),
+      fetch(`/api/follows/${params.address}`, { cache: "no-store" }).then((res) => res.json()),
+    ])
+      .then(([profileData, followData]) => {
+        if (cancelled) return;
         if (profileData.profile) {
           setDisplayName(profileData.profile.displayName || "");
           setBio(profileData.profile.bio || "");
@@ -140,7 +153,6 @@ export default function UserProfilePage({ params }: { params: { address: string 
           setCoverImage(profileData.profile.coverImage || "");
           setAvatar(profileData.profile.avatar || "");
         }
-
         setFollowStats({
           followers: followData.followers || 0,
           following: followData.following || 0,
@@ -149,12 +161,76 @@ export default function UserProfilePage({ params }: { params: { address: string 
         });
       })
       .catch(() => {
-        setError("Failed to load profile");
-      })
-      .finally(() => {
-        setLoading(false);
+        if (!cancelled) setError("Failed to load profile");
       });
+    return () => {
+      cancelled = true;
+    };
   }, [params.address]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const lensData = await fetch(
+          `/api/posts?author=${params.address}&limit=20&quick=1`,
+          {
+            cache: "no-store",
+          }
+        ).then((res) => res.json());
+
+        const postsData =
+          Array.isArray(lensData?.posts) && lensData.posts.length > 0
+            ? lensData
+            : await fetch(`/api/posts?author=${params.address}&limit=20&source=local`, {
+                cache: "no-store",
+              }).then((res) => res.json());
+
+        if (cancelled) return;
+        setPosts(postsData.posts || []);
+        setNextCursor(typeof postsData?.nextCursor === "string" ? postsData.nextCursor : null);
+        setPostsSource(postsData?.source === "local" ? "local" : "lens");
+        setResolvedAuthor(
+          typeof postsData?.resolvedAuthor === "string" && postsData.resolvedAuthor
+            ? postsData.resolvedAuthor
+            : params.address
+        );
+      } catch {
+        if (!cancelled) setError("Failed to load profile posts");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.address]);
+
+  async function loadMorePosts() {
+    if (!nextCursor || !resolvedAuthor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const query = new URLSearchParams({
+        author: resolvedAuthor,
+        limit: "50",
+        cursor: nextCursor,
+      });
+      if (postsSource) query.set("source", postsSource);
+      const data = await fetch(`/api/posts?${query.toString()}`, {
+        cache: "no-store",
+      }).then((res) => res.json());
+      const incoming = Array.isArray(data?.posts) ? (data.posts as ProfilePost[]) : [];
+      setPosts((prev) => {
+        const seen = new Set(prev.map((post) => post.id));
+        return [...prev, ...incoming.filter((post) => !seen.has(post.id))];
+      });
+      setNextCursor(typeof data?.nextCursor === "string" ? data.nextCursor : null);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   async function handleToggleFollow() {
     if (!authenticated || !viewerAddress || followStats.isSelf) return;
@@ -198,7 +274,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
   if (!params.address) return notFound();
 
   return (
-    <div className="min-h-screen bg-black text-white flex justify-center">
+    <AppShell active="Profile">
       <div className="w-full max-w-2xl bg-black">
         <div className="h-40 w-full relative">
           {coverImage ? (
@@ -216,10 +292,12 @@ export default function UserProfilePage({ params }: { params: { address: string 
         </div>
 
         <div className="pt-20 pb-6 px-6 flex flex-col items-center border-b border-gray-800 bg-black">
-          <div className="text-2xl font-bold text-white">
-            {displayName ? displayName : shortenAddress(params.address)}
-          </div>
-          <div className="text-blue-400 text-sm mb-2">{shortenAddress(params.address)}</div>
+          <div className="text-2xl font-bold text-white">{headerTitle}</div>
+          {showHeaderAddressRow && (
+            <div className="text-blue-400 text-sm mb-2">
+              {params.address}
+            </div>
+          )}
 
           {isOwnProfile && (
             <Link
@@ -260,14 +338,14 @@ export default function UserProfilePage({ params }: { params: { address: string 
           </div>
 
           <div className="flex gap-6 text-gray-400 text-sm mt-3">
-            <span><span className="font-bold text-white">{posts.length}</span> Posts</span>
+            <span><span className="font-bold text-white">{sortedPosts.length}</span> Posts</span>
             <span><span className="font-bold text-white">{followStats.followers}</span> Followers</span>
             <span><span className="font-bold text-white">{followStats.following}</span> Following</span>
           </div>
 
-          {posts.length > 0 && (
+          {sortedPosts.length > 0 && (
             <div className="text-xs text-gray-500 mt-2">
-              Joined {new Date(posts[posts.length - 1].timestamp).toLocaleDateString()}
+              Joined {new Date(sortedPosts[sortedPosts.length - 1].timestamp).toLocaleDateString()}
             </div>
           )}
         </div>
@@ -278,22 +356,111 @@ export default function UserProfilePage({ params }: { params: { address: string 
             <p className="text-gray-400">Loading...</p>
           ) : error ? (
             <p className="text-red-400">{error}</p>
-          ) : posts.length === 0 ? (
+          ) : sortedPosts.length === 0 ? (
             <p className="text-gray-500">No posts yet.</p>
           ) : (
             <div className="space-y-4">
-              {posts.map((post) => (
-                <div key={post.id} className="border border-gray-800 bg-gray-900 rounded-xl p-4">
-                  <div className="text-white mb-2 whitespace-pre-wrap break-words">
-                    {renderContentWithWrappedLinks(post.metadata?.content)}
+              {sortedPosts.map((post) => (
+                <article
+                  key={post.id}
+                  className="border border-gray-700 bg-gray-900 rounded-2xl p-4 flex gap-4 shadow-sm transition-shadow hover:shadow-lg hover:bg-gray-800"
+                >
+                  <Link href={`/profile/${post.author.address}`} className="shrink-0">
+                    <img
+                      src={avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
+                      alt="avatar"
+                      className="w-10 h-10 rounded-full border border-gray-700 bg-white object-cover"
+                    />
+                  </Link>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Link
+                        href={`/profile/${post.author.address}`}
+                        className="font-semibold hover:underline"
+                      >
+                        {post.author.username?.localName ||
+                          displayName ||
+                          post.author.address}
+                      </Link>
+                      <span className="text-xs text-gray-500">
+                        {post.author.address}
+                      </span>
+                    </div>
+
+                    <div className="text-white mb-2 whitespace-pre-wrap break-words">
+                      {renderContentWithWrappedLinks(post.metadata?.content)}
+                    </div>
+
+                    {post.metadata?.media && post.metadata.media.length > 0 && (
+                      <div
+                        className={`mb-2 ${
+                          post.metadata.media.length === 1 ? "max-w-xl" : "grid grid-cols-2 gap-2"
+                        }`}
+                      >
+                        {post.metadata.media.map((url, idx) => {
+                          const mediaKind = getMediaKind(url);
+                          const isSingle = post.metadata!.media!.length === 1;
+                          const frameClass = isSingle
+                            ? "overflow-hidden rounded-xl border border-gray-700 bg-black"
+                            : "overflow-hidden rounded-xl border border-gray-700 bg-black aspect-square";
+
+                          if (mediaKind === "video") {
+                            return (
+                              <div key={idx} className={frameClass}>
+                                <video
+                                  src={url}
+                                  controls
+                                  className={isSingle ? "w-full max-h-96 object-contain" : "w-full h-full object-cover"}
+                                />
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div key={idx} className={frameClass}>
+                              <img
+                                src={url}
+                                alt="media"
+                                className={
+                                  mediaKind === "gif"
+                                    ? isSingle
+                                      ? "w-full max-h-96 object-contain"
+                                      : "w-full h-full object-contain"
+                                    : isSingle
+                                      ? "w-full max-h-96 object-cover"
+                                      : "w-full h-full object-cover"
+                                }
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-4 mt-2 text-sm text-gray-400">
+                      <span>Like {post.likes?.length ?? 0}</span>
+                      <span>Repost {post.reposts?.length ?? 0}</span>
+                      <span>Replies {post.replyCount ?? 0}</span>
+                      <span className="text-xs text-gray-500">
+                        {new Date(post.timestamp).toLocaleString()}
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-500">{new Date(post.timestamp).toLocaleString()}</div>
-                </div>
+                </article>
               ))}
+              {nextCursor && (
+                <button
+                  onClick={() => void loadMorePosts()}
+                  disabled={loadingMore}
+                  className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm text-gray-200 hover:bg-gray-800 disabled:opacity-50"
+                >
+                  {loadingMore ? "Loading..." : "Load more posts"}
+                </button>
+              )}
             </div>
           )}
         </div>
       </div>
-    </div>
+    </AppShell>
   );
 }

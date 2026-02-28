@@ -9,7 +9,8 @@
       "author": {
         "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "5550fa63-5b32-4df0-8242-1444896a41cf",
@@ -20,7 +21,8 @@
       "author": {
         "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "00173d7c-adbc-4f35-8a07-4aa9c84f2e18",
@@ -32,7 +34,8 @@
       "author": {
         "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "0109fd7c-4a82-4e5e-8dc0-b1658212100b",
@@ -44,7 +47,8 @@
       "author": {
         "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "5cf66346-ce71-42db-a43f-352c250676c1",
@@ -56,7 +60,8 @@
       "author": {
         "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "04eead93-95a2-429f-baa0-c0174cee4908",
@@ -68,7 +73,8 @@
       "author": {
         "address": "0xe235bdcfc0484fbe0df0af226ded8aad3ff479db"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "eca22f4a-d2bc-4f6b-a8f4-cea61430f068",
@@ -79,7 +85,8 @@
       "author": {
         "address": "0xe235bdcfc0484fbe0df0af226ded8aad3ff479db"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "b6a79f33-803c-4b41-b207-68da4a48f273",
@@ -90,7 +97,8 @@
       "author": {
         "address": "0xe235bdcfc0484fbe0df0af226ded8aad3ff479db"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "0b0d211f-88d8-4a4b-a981-19fdb0eabc5c",
@@ -101,7 +109,8 @@
       "author": {
         "address": "0xe235bdcfc0484fbe0df0af226ded8aad3ff479db"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "404a7ee0-5642-49ba-a607-7031b4001fee",
@@ -112,7 +121,8 @@
       "author": {
         "address": "0xe235bdcfc0484fbe0df0af226ded8aad3ff479db"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "0ae29120-eb6b-4d1f-b892-62d877fc7766",
@@ -123,7 +133,8 @@
       "author": {
         "address": "0xe235bdcfc0484fbe0df0af226ded8aad3ff479db"
       },
-      "likes": []
+      "likes": [],
+      "reposts": []
     },
     {
       "id": "da396a9c-3665-450e-af25-ff307abcb7d6",
@@ -136,7 +147,8 @@
       },
       "likes": [
         "0xe235bdcfc0484fbe0df0af226ded8aad3ff479db"
-      ]
+      ],
+      "reposts": []
     },
     {
       "id": "1",
@@ -152,7 +164,8 @@
       },
       "likes": [
         "0xe235bdcfc0484fbe0df0af226ded8aad3ff479db"
-      ]
+      ],
+      "reposts": []
     },
     {
       "id": "2",
@@ -168,10 +181,44 @@
       },
       "likes": [
         "0xe235bdcfc0484fbe0df0af226ded8aad3ff479db"
-      ]
+      ],
+      "reposts": []
     }
   ],
   "replies": [
+    {
+      "id": "0xb6aa3681c5db14a86b94d50df8231eea10f492459f1820bba2ab2183b5525af6",
+      "postId": "35566474935478647078238873279738419723438948542309262518419315979033743983891",
+      "timestamp": "2026-02-28T07:43:21.314Z",
+      "metadata": {
+        "content": "gm"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      }
+    },
+    {
+      "id": "0x27b31aa560b41d698af4cc00a3a85570d52027e35d184a977584cd74eb8be61b",
+      "postId": "65864136544448049520625358697799511081378761214818329129370500384538680891648",
+      "timestamp": "2026-02-28T07:28:59.006Z",
+      "metadata": {
+        "content": "gm"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      }
+    },
+    {
+      "id": "0x79ee3cf1a97400fb1bc151f4e388cafe678f6d7e9c05d85f7c84afbeaba9f921",
+      "postId": "12103388187308297906452801377643213649413540209794087815938693106616995310091",
+      "timestamp": "2026-02-27T18:53:37.996Z",
+      "metadata": {
+        "content": "ha"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      }
+    },
     {
       "id": "0xfda466b2e02b226b8101e5e7b24a250592ae69558e0ef59b49127f3f2d9fbe93",
       "postId": "108474495378811700112025581628087436604674833210623626729995199212817647159364",
@@ -227,6 +274,13 @@
       "follower": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0",
       "following": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd",
       "createdAt": "2026-02-25T14:44:43.385Z"
+    }
+  ],
+  "reposts": [
+    {
+      "postId": "26572576482456547749988636803540499062398469670936780873386806138919887804892",
+      "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0",
+      "createdAt": "2026-02-27T18:26:24.938Z"
     }
   ]
 }

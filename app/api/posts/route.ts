@@ -4,7 +4,7 @@ import {
   isValidAddress,
   parseAndValidateContent,
 } from "@/lib/posts/content";
-import { createPost, listPosts } from "@/lib/posts/store";
+import { createPost, getRepostsForPosts, listPosts } from "@/lib/posts/store";
 import { validateMediaUrls } from "@/lib/posts/validation";
 import { fetchLensPosts } from "@/lib/lens/feed";
 import { createLensPost } from "@/lib/lens/writes";
@@ -70,13 +70,17 @@ export async function GET(req: Request) {
     const cursor = searchParams.get("cursor") ?? undefined;
     const author = searchParams.get("author") ?? undefined;
     const postId = searchParams.get("postId") ?? undefined;
+    const source = searchParams.get("source");
+    const quick = searchParams.get("quick") === "1";
     const debug = searchParams.get("debug") === "1";
     const debugSchema = searchParams.get("debugSchema") === "1";
 
     const boundedLimit = Number.isNaN(limit) ? 10 : limit;
     const useLensData =
-      process.env.LENS_POSTS_SOURCE === "lens" ||
-      process.env.NEXT_PUBLIC_LENS_POSTS_SOURCE === "lens";
+      source === "lens" ||
+      ((process.env.LENS_POSTS_SOURCE === "lens" ||
+        process.env.NEXT_PUBLIC_LENS_POSTS_SOURCE === "lens") &&
+        source !== "local");
 
     if (useLensData) {
       try {
@@ -150,12 +154,20 @@ export async function GET(req: Request) {
           cursor,
           author: resolvedAuthor,
           postId,
+          quick,
           debug,
           accessToken: accessToken ?? undefined,
         });
+        const repostMap = await getRepostsForPosts((lensData.posts ?? []).map((post) => post.id));
+        const postsWithReposts = (lensData.posts ?? []).map((post) => ({
+          ...post,
+          reposts: repostMap.get(post.id) ?? post.reposts ?? [],
+        }));
         return NextResponse.json({
           ...lensData,
+          posts: postsWithReposts,
           source: "lens",
+          resolvedAuthor: resolvedAuthor ?? author ?? null,
           ...(debug ? { usedAccessToken: !!accessToken } : {}),
         });
       } catch (lensError) {
@@ -173,6 +185,7 @@ export async function GET(req: Request) {
         return NextResponse.json({
           ...localData,
           source: "local",
+          resolvedAuthor: author ?? null,
           lensFallbackError: lensMessage,
         });
       }
@@ -184,7 +197,11 @@ export async function GET(req: Request) {
       author,
     });
 
-    return NextResponse.json({ ...localData, source: "local" });
+    return NextResponse.json({
+      ...localData,
+      source: "local",
+      resolvedAuthor: author ?? null,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch posts";
     return NextResponse.json({ error: message }, { status: 500 });

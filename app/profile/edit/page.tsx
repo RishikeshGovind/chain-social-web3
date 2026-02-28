@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
+import AppShell from "@/components/AppShell";
 
 type AvatarMode = "dicebear" | "custom";
 
@@ -174,8 +175,9 @@ export default function EditProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white p-6 flex flex-col items-center justify-center">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 w-full max-w-md">
+    <AppShell active="Profile">
+      <div className="w-full max-w-md p-6 text-white">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
         <h2 className="text-2xl font-semibold mb-6">Edit Profile</h2>
         <form onSubmit={handleSave}>
           <div className="mb-6">
@@ -350,7 +352,8 @@ export default function EditProfilePage() {
           {error && <div className="text-red-400 mt-2 text-center">{error}</div>}
           {saved && <div className="text-green-400 mt-2 text-center">Saved!</div>}
         </form>
+        </div>
       </div>
-    </div>
+    </AppShell>
   );
 }
