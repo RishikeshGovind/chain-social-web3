@@ -144,8 +144,6 @@ export async function POST(req: Request) {
       throw new Error(errors.join(" | ") || "Could not get Lens challenge");
     }
 
-    console.log("[Lens Auth] Challenge response:", challengeData);
-
     return NextResponse.json({
       challenge: challengeData.challenge,
       hasLensAccount: !!lensAccount,

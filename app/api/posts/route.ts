@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { checkPostRateLimit } from "@/lib/posts/rate-limit";
+import { checkPostRateLimit } from "@/lib/server/rate-limit";
 import {
   isValidAddress,
   parseAndValidateContent,
@@ -218,7 +218,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const rateLimit = checkPostRateLimit(actorAddress);
+    const rateLimit = await checkPostRateLimit(actorAddress);
     if (!rateLimit.ok) {
       const retryAfterSeconds = Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1000));
       return NextResponse.json(
@@ -256,8 +256,6 @@ export async function POST(req: Request) {
 
     if (useLensData) {
       const accessToken = await getLensAccessTokenFromCookie();
-      console.log("[Post API] Has access token:", !!accessToken);
-      console.log("[Post API] Access token preview:", accessToken ? `${accessToken.slice(0, 20)}...` : "none");
       
       if (!accessToken) {
         return NextResponse.json(

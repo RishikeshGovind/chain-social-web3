@@ -137,7 +137,6 @@ export async function POST(req: Request) {
     }
 
     console.log("[Lens Auth] Got tokens, setting cookies...");
-    console.log("[Lens Auth] Access token length:", accessToken.length);
     
     const response = NextResponse.json({ success: true, authenticated: true });
     const secure = process.env.NODE_ENV === "production";

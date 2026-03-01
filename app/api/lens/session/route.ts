@@ -84,7 +84,7 @@ export async function GET() {
         const reason =
           refreshError instanceof Error ? refreshError.message : "refresh_exception";
         return NextResponse.json({
-          authenticated: true,
+          authenticated: false,
           hasRefreshToken: true,
           degraded: true,
           reason,

@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import { normalizeAddress } from "@/lib/posts/content";
+import { lensRequest } from "@/lib/lens";
 
 function parseJwtPayload(token: string) {
   try {
@@ -12,6 +13,14 @@ function parseJwtPayload(token: string) {
   } catch {
     return null;
   }
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 export function isTokenExpired(token: string): boolean {
@@ -26,24 +35,128 @@ export function isTokenExpired(token: string): boolean {
   return exp < now + 60;
 }
 
-function findAddress(value: unknown): string | null {
-  if (typeof value === "string") {
-    const match = value.match(/0x[a-fA-F0-9]{40}/);
-    return match ? normalizeAddress(match[0]) : null;
-  }
+type CachedActor = {
+  address: string;
+  expiresAtMs: number;
+};
 
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const address = findAddress(item);
-      if (address) return address;
+const actorCache = new Map<string, CachedActor>();
+const ACTOR_CACHE_TTL_MS = 15_000;
+
+function findAddressInGraph(value: unknown): string | null {
+  const queue: unknown[] = [value];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+
+    if (typeof current === "string") {
+      const match = current.match(/0x[a-fA-F0-9]{40}/);
+      if (match) return normalizeAddress(match[0]);
+      continue;
     }
-    return null;
+
+    if (Array.isArray(current)) {
+      queue.push(...current);
+      continue;
+    }
+
+    const object = asObject(current);
+    if (!object) continue;
+    queue.push(...Object.values(object));
+  }
+  return null;
+}
+
+async function resolveActorAddressFromLens(accessToken: string): Promise<string | null> {
+  const cached = actorCache.get(accessToken);
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return cached.address;
   }
 
-  if (value && typeof value === "object") {
-    for (const nestedValue of Object.values(value)) {
-      const address = findAddress(nestedValue);
-      if (address) return address;
+  const variants: string[] = [
+    `
+      query Me {
+        me {
+          __typename
+          ... on Account {
+            address
+            owner {
+              address
+            }
+          }
+          ... on AuthenticatedUser {
+            address
+            account {
+              address
+            }
+            wallet {
+              address
+            }
+          }
+        }
+      }
+    `,
+    `
+      query Viewer {
+        viewer {
+          __typename
+          ... on Account {
+            address
+            owner {
+              address
+            }
+          }
+          ... on User {
+            address
+            account {
+              address
+            }
+            wallet {
+              address
+            }
+          }
+        }
+      }
+    `,
+    `
+      query AuthenticatedUser {
+        authenticatedUser {
+          __typename
+          address
+          account {
+            address
+          }
+          wallet {
+            address
+          }
+        }
+      }
+    `,
+  ];
+
+  for (const query of variants) {
+    try {
+      const data = await lensRequest(query, undefined, accessToken);
+      const root = asObject(data);
+      const prioritized =
+        asString(asObject(asObject(root?.me)?.account)?.address) ??
+        asString(asObject(asObject(root?.viewer)?.account)?.address) ??
+        asString(asObject(asObject(root?.authenticatedUser)?.account)?.address) ??
+        asString(asObject(root?.me)?.address) ??
+        asString(asObject(root?.viewer)?.address) ??
+        asString(asObject(root?.authenticatedUser)?.address) ??
+        findAddressInGraph(root);
+
+      if (prioritized) {
+        const normalized = normalizeAddress(prioritized);
+        actorCache.set(accessToken, {
+          address: normalized,
+          expiresAtMs: Date.now() + ACTOR_CACHE_TTL_MS,
+        });
+        return normalized;
+      }
+    } catch {
+      // Try next variant.
     }
   }
 
@@ -55,11 +168,9 @@ export async function getActorAddressFromLensCookie() {
   const lensToken = cookieStore.get("lensAccessToken")?.value;
 
   if (!lensToken) return null;
+  if (isTokenExpired(lensToken)) return null;
 
-  const payload = parseJwtPayload(lensToken);
-  if (!payload) return null;
-
-  return findAddress(payload);
+  return resolveActorAddressFromLens(lensToken);
 }
 
 export async function getLensAccessTokenFromCookie() {

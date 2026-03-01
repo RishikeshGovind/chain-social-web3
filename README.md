@@ -10,6 +10,12 @@ ChainSocial is a Next.js app for experimenting with a web3 social feed.
    - `LENS_APP_ADDRESS=<your_lens_app_address>`
    - `LENS_POSTS_SOURCE=local` (or `lens` to pull feed data from Lens API)
    - `LENS_API_URL=https://api.lens.xyz/graphql` (recommended explicit Lens endpoint)
+   - optional production backends:
+     - `CHAINSOCIAL_STATE_BACKEND=file|postgres`
+     - `DATABASE_URL=<postgres_connection_string>` (required when backend is `postgres`)
+     - `CHAINSOCIAL_MEDIA_BACKEND=local|remote`
+     - `CHAINSOCIAL_MEDIA_REMOTE_URL=<upload_service_url>` (when media backend is `remote`)
+     - `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (for distributed rate limits)
 3. Start dev server: `npm run dev`
 
 ## User Posting (Current Branch)

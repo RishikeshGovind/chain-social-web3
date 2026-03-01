@@ -3,6 +3,7 @@
 import { lensRequest } from "../lens";
 import { normalizeAddress } from "../posts/content";
 import type { Post, Reply } from "../posts/types";
+import { randomUUID } from "node:crypto";
 
 type MutationVariant = {
   query: string;
@@ -68,7 +69,7 @@ export function buildContentUri(content: string, media?: string[]): string {
       mainContentFocus: "TEXT_ONLY",
       content,
       locale: "en",
-      id: crypto.randomUUID(),
+      id: randomUUID(),
     },
   };
   
@@ -180,8 +181,6 @@ export async function createLensPost(params: {
     // debug: log shape once to aid diagnosing schema mismatches during development
     console.log("[Lens] createPost request:", JSON.stringify(requestBody, null, 2));
     console.log("[Lens] createPost actorAddress:", params.actorAddress);
-    console.log("[Lens] createPost accessToken exists:", !!params.accessToken);
-    console.log("[Lens] createPost accessToken preview:", params.accessToken.slice(0, 30) + "...");
 
     // simulate before making network call (tests only)
     maybeSimulateOnboarding(params.content);
@@ -236,7 +235,7 @@ export async function createLensPost(params: {
       throw new Error("Lens post failed: missing post hash in response");
     }
 
-    const id = hash ? hash : `lens-${crypto.randomUUID()}`;
+    const id = hash ? hash : `lens-${randomUUID()}`;
 
     const post: Post = {
       id,
@@ -283,7 +282,7 @@ export async function createLensPost(params: {
         );
         const retryResult = extractFirstResult(retryData);
         const hash = asString(retryResult?.hash);
-        const id = hash ? hash : `lens-${crypto.randomUUID()}`;
+        const id = hash ? hash : `lens-${randomUUID()}`;
         return {
           id,
           timestamp: new Date().toISOString(),

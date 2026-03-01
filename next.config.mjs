@@ -34,15 +34,27 @@ const nextConfig = {
   // Static optimization
   staticPageGenerationTimeout: 60,
   
-  // SWR cache headers
+  // Security headers for browser-facing routes.
   async headers() {
     return [
       {
-        source: '/api/:path*',
+        source: '/:path*',
         headers: [
           {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff',
+          },
+          {
+            key: 'Referrer-Policy',
+            value: 'strict-origin-when-cross-origin',
+          },
+          {
+            key: 'X-Frame-Options',
+            value: 'DENY',
+          },
+          {
             key: 'Cache-Control',
-            value: 'public, s-maxage=10, stale-while-revalidate=59',
+            value: 'no-store',
           },
         ],
       },

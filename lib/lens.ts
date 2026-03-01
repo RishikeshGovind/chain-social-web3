@@ -126,10 +126,8 @@ async function makeRequest<TData>(
   referer: string,
   timeout: number
 ): Promise<TData> {
-// debug output to help track schema mismatches at each endpoint
+  // Keep logs minimal to avoid leaking tokens/signatures in production logs.
   console.log("[Lens] POST", url, {
-    query: query.replace(/\s+/g, " ").trim(),
-    variables,
     hasAccessToken: !!accessToken,
   });
 
@@ -142,7 +140,6 @@ async function makeRequest<TData>(
   
   if (accessToken) {
     headers.Authorization = `Bearer ${accessToken}`;
-    console.log("[Lens] Using Authorization header with token");
   }
 
   const response = await axios.post<GraphQLResponse<TData>>( 

@@ -43,6 +43,19 @@ type FeedResponse = {
   nextCursor?: string | null;
 };
 
+function isPost(value: unknown): value is Post {
+  if (!value || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  const author = obj.author;
+  return (
+    typeof obj.id === "string" &&
+    typeof obj.timestamp === "string" &&
+    !!author &&
+    typeof author === "object" &&
+    typeof (author as Record<string, unknown>).address === "string"
+  );
+}
+
 function shortenAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
@@ -223,8 +236,9 @@ export default function ExplorePage() {
 
       const { ok, data } = await likeWithRetry();
       if (!ok) throw new Error((data.error as string) || "Failed to update like");
-      if (data.post) {
-        setPosts((prev) => prev.map((post) => (post.id === postId ? data.post : post)));
+      if (isPost(data.post)) {
+        const updated = data.post;
+        setPosts((prev) => prev.map((post) => (post.id === postId ? updated : post)));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update like");
@@ -279,8 +293,9 @@ export default function ExplorePage() {
 
       const { ok, data } = await repostWithRetry();
       if (!ok) throw new Error((data.error as string) || "Failed to update repost");
-      if (data.post) {
-        setPosts((prev) => prev.map((post) => (post.id === postId ? data.post : post)));
+      if (isPost(data.post)) {
+        const updated = data.post;
+        setPosts((prev) => prev.map((post) => (post.id === postId ? updated : post)));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update repost");

@@ -1,10 +1,10 @@
 //lib/posts/store.ts
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { normalizeAddress } from "@/lib/posts/content";
 import { canMutateOwnedResource, canToggleFollow } from "@/lib/posts/authz";
 import type { Follow, ListPostsInput, ListRepliesInput, Post, Reply, Repost } from "@/lib/posts/types";
+import { getStateStore } from "@/lib/server/persistence";
+import { randomUUID } from "node:crypto";
 
 type StoreData = {
   posts: Post[];
@@ -12,9 +12,6 @@ type StoreData = {
   follows: Follow[];
   reposts: Repost[];
 };
-
-const DATA_DIR = path.join(process.cwd(), "data");
-const POSTS_FILE = path.join(DATA_DIR, "posts.json");
 
 const DEFAULT_POSTS: Post[] = [
   {
@@ -97,25 +94,23 @@ function withRepostCounts(posts: Post[], reposts: Repost[]) {
 }
 
 async function persist(store: StoreData) {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(POSTS_FILE, JSON.stringify(store, null, 2), "utf8");
+  await getStateStore().write(store);
 }
 
 async function loadStore(): Promise<StoreData> {
   if (cachedStore) return cachedStore;
 
-  try {
-    const raw = await readFile(POSTS_FILE, "utf8");
-    const parsed = JSON.parse(raw) as Partial<StoreData>;
+  const parsed = (await getStateStore().read()) as Partial<StoreData> | null;
+  if (!parsed) {
+    cachedStore = { posts: DEFAULT_POSTS, replies: [], follows: [], reposts: [] };
+    await persist(cachedStore);
+  } else {
     cachedStore = {
       posts: Array.isArray(parsed.posts) ? parsed.posts : DEFAULT_POSTS,
       replies: Array.isArray(parsed.replies) ? parsed.replies : [],
       follows: Array.isArray(parsed.follows) ? parsed.follows : [],
       reposts: Array.isArray(parsed.reposts) ? parsed.reposts : [],
     };
-  } catch {
-    cachedStore = { posts: DEFAULT_POSTS, replies: [], follows: [], reposts: [] };
-    await persist(cachedStore);
   }
 
   cachedStore.posts = cachedStore.posts
@@ -199,7 +194,7 @@ export async function createPost(params: {
   const store = await loadStore();
 
   const post: Post = {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     timestamp: new Date().toISOString(),
     metadata: {
       content: params.content,
@@ -369,7 +364,7 @@ export async function createReply(params: {
   const store = await loadStore();
 
   const reply: Reply = {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     postId: params.postId,
     timestamp: new Date().toISOString(),
     metadata: { content: params.content },

@@ -112,17 +112,18 @@ test("buildContentUri produces json data URI including content and media", () =>
   assert.ok(uri.startsWith("data:application/json,"));
   const payload = decodeURIComponent(uri.split(",")[1]);
   const obj = JSON.parse(payload);
-  assert.equal(obj.content, "hello world");
-  assert.ok(Array.isArray(obj.media));
-  assert.equal(obj.media[0].url, "https://foo.jpg");
+  assert.equal(obj.lens.content, "hello world");
+  assert.equal(obj.lens.mainContentFocus, "IMAGE");
+  assert.ok(Array.isArray(obj.lens.attachments));
+  assert.equal(obj.lens.attachments[0].item, "https://foo.jpg");
 });
 
-test("buildPostRequest includes feed and omits raw content/media", () => {
+test("buildPostRequest includes contentUri only", () => {
   const req = lensWrites.buildPostRequest("0xfeed", "hi", ["m1"]);
-  assert.equal(req.feed, "0xfeed");
   assert.ok(typeof req.contentUri === "string");
   assert.equal(req.hasOwnProperty("content"), false);
   assert.equal(req.hasOwnProperty("media"), false);
+  assert.equal(req.hasOwnProperty("feed"), false);
 });
 
 

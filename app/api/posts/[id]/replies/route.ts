@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { checkReplyRateLimit } from "@/lib/posts/rate-limit";
+import { checkReplyRateLimit } from "@/lib/server/rate-limit";
 import {
   isValidAddress,
   normalizeAddress,
@@ -380,7 +380,7 @@ export async function POST(
       );
     }
 
-    const rateLimit = checkReplyRateLimit(actorAddress);
+    const rateLimit = await checkReplyRateLimit(actorAddress);
     if (!rateLimit.ok) {
       const retryAfterSeconds = Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1000));
       return NextResponse.json(
