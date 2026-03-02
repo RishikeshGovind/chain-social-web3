@@ -78,6 +78,13 @@ export default function AppShell({ active, children, rightSidebar }: AppShellPro
                 <li>#Lens</li>
                 <li>#DeFi</li>
               </ul>
+              <div className="mt-8 border-t border-gray-800 pt-4 text-xs text-gray-400">
+                <div className="flex flex-col gap-2">
+                  <Link href="/legal/privacy" className="hover:text-white">Privacy</Link>
+                  <Link href="/legal/terms" className="hover:text-white">Terms</Link>
+                  <Link href="/legal/cookies" className="hover:text-white">Cookies</Link>
+                </div>
+              </div>
             </div>
           )}
         </div>

@@ -7,6 +7,7 @@ import { clearDeduplicationCache, deduplicatedRequest } from "@/lib/request-dedu
 import { retryWithBackoff } from "@/lib/retry-backoff";
 import { compressImages, getFileSize, getCompressionRatio } from "@/lib/image-compression";
 import { readBookmarks, toggleBookmarkId } from "@/lib/client/bookmarks";
+import { hasFunctionalConsent } from "@/lib/client/consent";
 
 type Post = {
   id: string;
@@ -101,6 +102,28 @@ function sanitizeDisplayContent(raw?: string): string {
 
 const URL_SPLIT_REGEX = /(https?:\/\/[^\s]+)/gi;
 
+function readLensAuthHint() {
+  if (!hasFunctionalConsent()) return null;
+  try {
+    return localStorage.getItem("lensAuthenticated");
+  } catch {
+    return null;
+  }
+}
+
+function setLensAuthHint(value: "1" | null) {
+  if (!hasFunctionalConsent()) return;
+  try {
+    if (value === null) {
+      localStorage.removeItem("lensAuthenticated");
+    } else {
+      localStorage.setItem("lensAuthenticated", value);
+    }
+  } catch {
+    // ignore storage access errors
+  }
+}
+
 function renderContentWithWrappedLinks(raw?: string) {
   const content = sanitizeDisplayContent(raw);
   if (!content) return "";
@@ -188,12 +211,8 @@ export default function FeedPage() {
   }, [authenticated]);
 
   useEffect(() => {
-    try {
-      if (localStorage.getItem("lensAuthenticated") === "1") {
-        setIsLensAuthenticated(true);
-      }
-    } catch {
-      // ignore storage access errors
+    if (readLensAuthHint() === "1") {
+      setIsLensAuthenticated(true);
     }
   }, []);
 
@@ -248,18 +267,10 @@ export default function FeedPage() {
         console.log("[Lens] Session check result:", data);
         if (data.authenticated) {
           setIsLensAuthenticated(true);
-          try {
-            localStorage.setItem("lensAuthenticated", "1");
-          } catch {
-            // ignore storage access errors
-          }
+          setLensAuthHint("1");
           console.log("[Lens] Session restored successfully");
         } else {
-          try {
-            localStorage.removeItem("lensAuthenticated");
-          } catch {
-            // ignore storage access errors
-          }
+          setLensAuthHint(null);
           setIsLensAuthenticated(false);
           console.log("[Lens] No valid session found, reason:", data.reason);
         }
@@ -422,11 +433,7 @@ export default function FeedPage() {
 
       console.log("[Lens] Authentication successful!");
       setIsLensAuthenticated(true);
-      try {
-        localStorage.setItem("lensAuthenticated", "1");
-      } catch {
-        // ignore storage access errors
-      }
+      setLensAuthHint("1");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Lens authentication failed";
       setError(message);
@@ -534,11 +541,7 @@ export default function FeedPage() {
           } else {
             // Refresh failed, user needs to reconnect
             setIsLensAuthenticated(false);
-            try {
-              localStorage.removeItem("lensAuthenticated");
-            } catch {
-              // ignore storage access errors
-            }
+            setLensAuthHint(null);
             throw new Error("Session expired. Please reconnect Lens.");
           }
         }
@@ -613,11 +616,7 @@ export default function FeedPage() {
           if (refreshRes.ok) return likeWithRetry(1);
 
           setIsLensAuthenticated(false);
-          try {
-            localStorage.removeItem("lensAuthenticated");
-          } catch {
-            // ignore storage access errors
-          }
+          setLensAuthHint(null);
           throw new Error("Session expired. Please reconnect Lens.");
         }
 
@@ -682,11 +681,7 @@ export default function FeedPage() {
           if (refreshRes.ok) return repostWithRetry(1);
 
           setIsLensAuthenticated(false);
-          try {
-            localStorage.removeItem("lensAuthenticated");
-          } catch {
-            // ignore storage access errors
-          }
+          setLensAuthHint(null);
           throw new Error("Session expired. Please reconnect Lens.");
         }
 
@@ -769,11 +764,7 @@ export default function FeedPage() {
           }
 
           setIsLensAuthenticated(false);
-          try {
-            localStorage.removeItem("lensAuthenticated");
-          } catch {
-            // ignore storage access errors
-          }
+          setLensAuthHint(null);
           throw new Error("Session expired. Please reconnect Lens.");
         }
 
@@ -1376,6 +1367,13 @@ export default function FeedPage() {
               <li>#DeFi</li>
               <li>#Crypto</li>
             </ul>
+          </div>
+          <div className="mt-8 border-t border-gray-800 pt-4 text-xs text-gray-400">
+            <div className="flex flex-col gap-2">
+              <Link href="/legal/privacy" className="hover:text-white">Privacy</Link>
+              <Link href="/legal/terms" className="hover:text-white">Terms</Link>
+              <Link href="/legal/cookies" className="hover:text-white">Cookies</Link>
+            </div>
           </div>
         </div>
       </aside>

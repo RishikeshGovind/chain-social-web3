@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import Navbar from "@/components/Navbar";
 import Providers from "@/components/Providers";
+import ConsentBanner from "@/components/ConsentBanner";
 
 export const metadata: Metadata = {
   title: "ChainSocial",
@@ -21,6 +22,7 @@ export default function RootLayout({
           <main className="w-full">
             {children}
           </main>
+          <ConsentBanner />
         </Providers>
       </body>
     </html>

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
+import { hasFunctionalConsent } from "@/lib/client/consent";
 
 type NotificationItem = {
   id: string;
@@ -14,6 +15,7 @@ type NotificationItem = {
 const STORAGE_KEY = "chainsocial:notifications";
 
 function readNotifications(): NotificationItem[] {
+  if (!hasFunctionalConsent()) return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
@@ -25,6 +27,7 @@ function readNotifications(): NotificationItem[] {
 }
 
 function writeNotifications(items: NotificationItem[]) {
+  if (!hasFunctionalConsent()) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 

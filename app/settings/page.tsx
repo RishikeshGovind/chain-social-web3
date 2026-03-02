@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
+import { hasFunctionalConsent } from "@/lib/client/consent";
 
 type UserSettings = {
   compactFeed: boolean;
@@ -19,6 +20,7 @@ const DEFAULT_SETTINGS: UserSettings = {
 };
 
 function readSettings(): UserSettings {
+  if (!hasFunctionalConsent()) return DEFAULT_SETTINGS;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_SETTINGS;
@@ -34,6 +36,7 @@ function readSettings(): UserSettings {
 }
 
 function writeSettings(settings: UserSettings) {
+  if (!hasFunctionalConsent()) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 

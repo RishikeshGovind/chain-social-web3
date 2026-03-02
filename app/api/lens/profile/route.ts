@@ -3,19 +3,7 @@
 import { NextResponse } from "next/server";
 import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
 import { isValidAddress, normalizeAddress } from "@/lib/posts/content";
-
-// In-memory user profile store (resets on server restart)
-const profiles: Record<
-  string,
-  {
-    displayName?: string;
-    bio?: string;
-    location?: string;
-    website?: string;
-    coverImage?: string;
-    avatar?: string;
-  }
-> = {};
+import { getProfile, setProfile } from "@/lib/profiles/store";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -26,7 +14,8 @@ export async function GET(req: Request) {
   if (!isValidAddress(address)) {
     return NextResponse.json({ error: "Invalid address" }, { status: 400 });
   }
-  return NextResponse.json({ profile: profiles[normalizeAddress(address)] || {} });
+  const profile = await getProfile(address);
+  return NextResponse.json({ profile });
 }
 
 export async function POST(req: Request) {
@@ -80,10 +69,7 @@ export async function POST(req: Request) {
       avatar: cleanUrl(body?.avatar, 512),
     };
 
-    // Keep profile reachable by both wallet and Lens-account routes.
-    for (const key of aliases) {
-      profiles[key] = nextProfile;
-    }
+    await setProfile(Array.from(aliases), nextProfile);
 
     return NextResponse.json({ success: true, profile: nextProfile });
   } catch (error) {

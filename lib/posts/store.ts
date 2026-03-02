@@ -478,3 +478,51 @@ export async function getFollowStats(targetAddress: string, viewerAddress?: stri
     isFollowing,
   };
 }
+
+export async function exportUserOffchainData(address: string) {
+  const store = await loadStore();
+  const normalized = normalizeAddress(address);
+  return {
+    posts: store.posts.filter((post) => post.author.address === normalized),
+    replies: store.replies.filter((reply) => reply.author.address === normalized),
+    followsAsFollower: store.follows.filter((follow) => follow.follower === normalized),
+    followsAsFollowing: store.follows.filter((follow) => follow.following === normalized),
+    reposts: store.reposts.filter((repost) => repost.address === normalized),
+    likedPostIds: store.posts
+      .filter((post) => (post.likes ?? []).includes(normalized))
+      .map((post) => post.id),
+  };
+}
+
+export async function deleteUserOffchainData(address: string) {
+  const store = await loadStore();
+  const normalized = normalizeAddress(address);
+
+  const before = {
+    posts: store.posts.length,
+    replies: store.replies.length,
+    follows: store.follows.length,
+    reposts: store.reposts.length,
+  };
+
+  store.posts = store.posts.filter((post) => post.author.address !== normalized);
+  store.replies = store.replies.filter((reply) => reply.author.address !== normalized);
+  store.follows = store.follows.filter(
+    (follow) => follow.follower !== normalized && follow.following !== normalized
+  );
+  store.reposts = store.reposts.filter((repost) => repost.address !== normalized);
+
+  for (const post of store.posts) {
+    post.likes = (post.likes ?? []).filter((likeAddress) => likeAddress !== normalized);
+    post.reposts = (post.reposts ?? []).filter((repostAddress) => repostAddress !== normalized);
+  }
+
+  await saveStore(store);
+
+  return {
+    deletedPosts: before.posts - store.posts.length,
+    deletedReplies: before.replies - store.replies.length,
+    deletedFollows: before.follows - store.follows.length,
+    deletedReposts: before.reposts - store.reposts.length,
+  };
+}

@@ -1,7 +1,9 @@
 const BOOKMARK_STORAGE_KEY = "chainsocial:bookmarks";
+import { hasFunctionalConsent } from "@/lib/client/consent";
 
 export function readBookmarks(): string[] {
   if (typeof window === "undefined") return [];
+  if (!hasFunctionalConsent()) return [];
   try {
     const raw = localStorage.getItem(BOOKMARK_STORAGE_KEY);
     if (!raw) return [];
@@ -15,6 +17,7 @@ export function readBookmarks(): string[] {
 
 export function writeBookmarks(ids: string[]) {
   if (typeof window === "undefined") return;
+  if (!hasFunctionalConsent()) return;
   localStorage.setItem(BOOKMARK_STORAGE_KEY, JSON.stringify(ids));
   window.dispatchEvent(new Event("chainsocial:bookmarks-changed"));
 }

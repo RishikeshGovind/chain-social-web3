@@ -18,6 +18,38 @@ ChainSocial is a Next.js app for experimenting with a web3 social feed.
      - `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (for distributed rate limits)
 3. Start dev server: `npm run dev`
 
+## Compliance Controls
+
+Region-aware compliance enforcement is enabled via `middleware.ts` and env flags in `.env.example`.
+
+- Global read-only: `CHAINSOCIAL_GLOBAL_READ_ONLY=true`
+- Full country block: `CHAINSOCIAL_BLOCKED_COUNTRIES=IN,CN`
+- Country write block: `CHAINSOCIAL_WRITE_BLOCKED_COUNTRIES=BR`
+- Feature kill switches globally or by country:
+  - `CHAINSOCIAL_DISABLE_<FEATURE>=true`
+  - `CHAINSOCIAL_DISABLE_<FEATURE>_COUNTRIES=US,DE`
+
+See:
+- `docs/DATA_CLASSIFICATION_MATRIX.md`
+- `docs/COMPLIANCE_CHECKLIST.md`
+
+EU baseline features now included:
+- legal pages: `/legal/privacy`, `/legal/terms`, `/legal/cookies`, `/legal/dsa`
+- DSAR helper endpoints (authenticated): `GET /api/privacy/export`, `DELETE /api/privacy/delete`
+- DSAR intake/status endpoint (authenticated): `POST|GET /api/privacy/request`
+- compliance admin endpoints (require `x-admin-token`):
+  - `GET|PATCH /api/admin/compliance/dsar`
+  - `POST /api/admin/compliance/retention`
+- consent banner for optional local storage categories
+
+Compliance runbooks/templates:
+- `docs/ROPA_TEMPLATE.md`
+- `docs/PROCESSOR_REGISTER_TEMPLATE.md`
+- `docs/TRANSFER_IMPACT_ASSESSMENT_TEMPLATE.md`
+- `docs/DSAR_RUNBOOK.md`
+- `docs/RETENTION_POLICY.md`
+- `docs/INCIDENT_RESPONSE_RUNBOOK.md`
+
 ## User Posting (Current Branch)
 
 This branch focuses on local user posting and engagement, while keeping Lens auth for identity.

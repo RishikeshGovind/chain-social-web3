@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
+import { hasFunctionalConsent } from "@/lib/client/consent";
 
 type UserList = {
   id: string;
@@ -12,6 +13,7 @@ type UserList = {
 const STORAGE_KEY = "chainsocial:lists";
 
 function readLists(): UserList[] {
+  if (!hasFunctionalConsent()) return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
@@ -23,6 +25,7 @@ function readLists(): UserList[] {
 }
 
 function writeLists(items: UserList[]) {
+  if (!hasFunctionalConsent()) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
