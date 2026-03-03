@@ -186,6 +186,8 @@ export async function listPosts({ limit, cursor, author }: ListPostsInput) {
 }
 
 export async function createPost(params: {
+  id?: string;
+  timestamp?: string;
   address: string;
   content: string;
   username?: string;
@@ -194,8 +196,8 @@ export async function createPost(params: {
   const store = await loadStore();
 
   const post: Post = {
-    id: randomUUID(),
-    timestamp: new Date().toISOString(),
+    id: params.id ?? randomUUID(),
+    timestamp: params.timestamp ?? new Date().toISOString(),
     metadata: {
       content: params.content,
       ...(params.media ? { media: params.media } : {}),
@@ -208,7 +210,13 @@ export async function createPost(params: {
     reposts: [],
   };
 
-  store.posts.unshift(post);
+  const existingIndex = store.posts.findIndex((item) => item.id === post.id);
+  if (existingIndex >= 0) {
+    store.posts[existingIndex] = post;
+  } else {
+    store.posts.unshift(post);
+  }
+  store.posts.sort(compareDesc);
   await saveStore(store);
   return { ...post, replyCount: 0 };
 }

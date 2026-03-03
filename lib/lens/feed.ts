@@ -643,7 +643,6 @@ const QUERY_VARIANTS = [
                   content
                   image {
                     item
-                    raw
                   }
                   attachments {
                     ... on MediaImage {
@@ -655,7 +654,6 @@ const QUERY_VARIANTS = [
                   content
                   video {
                     item
-                    raw
                   }
                   attachments {
                     ... on MediaVideo {
@@ -850,8 +848,8 @@ const FEED_QUERY_VARIANTS = [
                 __typename
                 ... on TextOnlyMetadata { content }
                 ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item raw } }
-                ... on VideoMetadata { content video { item raw } }
+                ... on ImageMetadata { content image { item } }
+                ... on VideoMetadata { content video { item } }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -872,8 +870,8 @@ const FEED_QUERY_VARIANTS = [
                     __typename
                     ... on TextOnlyMetadata { content }
                     ... on ArticleMetadata { content }
-                    ... on ImageMetadata { content image { item raw } }
-                    ... on VideoMetadata { content video { item raw } }
+                    ... on ImageMetadata { content image { item } }
+                    ... on VideoMetadata { content video { item } }
                     ... on AudioMetadata { content audio { item } }
                     ... on EmbedMetadata { content }
                     ... on LinkMetadata { content }
@@ -894,8 +892,8 @@ const FEED_QUERY_VARIANTS = [
                     __typename
                     ... on TextOnlyMetadata { content }
                     ... on ArticleMetadata { content }
-                    ... on ImageMetadata { content image { item raw } }
-                    ... on VideoMetadata { content video { item raw } }
+                    ... on ImageMetadata { content image { item } }
+                    ... on VideoMetadata { content video { item } }
                     ... on AudioMetadata { content audio { item } }
                     ... on EmbedMetadata { content }
                     ... on LinkMetadata { content }
@@ -999,8 +997,8 @@ const AUTHOR_QUERY_VARIANTS = [
                 __typename
                 ... on TextOnlyMetadata { content }
                 ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item raw } }
-                ... on VideoMetadata { content video { item raw } }
+                ... on ImageMetadata { content image { item } }
+                ... on VideoMetadata { content video { item } }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -1037,8 +1035,8 @@ const AUTHOR_QUERY_VARIANTS = [
                 __typename
                 ... on TextOnlyMetadata { content }
                 ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item raw } }
-                ... on VideoMetadata { content video { item raw } }
+                ... on ImageMetadata { content image { item } }
+                ... on VideoMetadata { content video { item } }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -1075,8 +1073,8 @@ const AUTHOR_QUERY_VARIANTS = [
                 __typename
                 ... on TextOnlyMetadata { content }
                 ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item raw } }
-                ... on VideoMetadata { content video { item raw } }
+                ... on ImageMetadata { content image { item } }
+                ... on VideoMetadata { content video { item } }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }

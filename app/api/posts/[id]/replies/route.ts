@@ -354,11 +354,23 @@ export async function GET(
       }
     }
 
-    const data = await listReplies({
-      postId,
-      limit: boundedLimit,
-      cursor,
-    });
+    let data;
+    try {
+      data = await listReplies({
+        postId,
+        limit: boundedLimit,
+        cursor,
+      });
+    } catch (localError) {
+      const localMessage =
+        localError instanceof Error ? localError.message : "local replies unavailable";
+      console.error("Local replies load failed:", localMessage);
+      return NextResponse.json({
+        replies: [],
+        nextCursor: null,
+        localFallbackError: localMessage,
+      });
+    }
 
     return NextResponse.json(data);
   } catch (error) {

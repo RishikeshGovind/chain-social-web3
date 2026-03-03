@@ -13,6 +13,12 @@ ChainSocial is a Next.js app for experimenting with a web3 social feed.
    - optional production backends:
      - `CHAINSOCIAL_STATE_BACKEND=file|postgres`
      - `DATABASE_URL=<postgres_connection_string>` (required when backend is `postgres`)
+     - optional fail-fast DB settings:
+       - `CHAINSOCIAL_STATE_FAILOVER_TO_FILE=true`
+       - `CHAINSOCIAL_DB_CONNECT_TIMEOUT_MS=2500`
+       - `CHAINSOCIAL_DB_QUERY_TIMEOUT_MS=3000`
+       - `CHAINSOCIAL_DB_OPERATION_TIMEOUT_MS=3500`
+       - `CHAINSOCIAL_DB_FAILOVER_COOLDOWN_MS=30000`
      - `CHAINSOCIAL_MEDIA_BACKEND=local|remote`
      - `CHAINSOCIAL_MEDIA_REMOTE_URL=<upload_service_url>` (when media backend is `remote`)
      - `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (for distributed rate limits)

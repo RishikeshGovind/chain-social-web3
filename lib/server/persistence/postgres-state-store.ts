@@ -13,6 +13,13 @@ type PgClient = {
   end: () => Promise<void>;
 };
 
+type PgClientConfig = {
+  connectionString: string;
+  connectionTimeoutMillis?: number;
+  statement_timeout?: number;
+  query_timeout?: number;
+};
+
 async function importPg() {
   const importer = new Function("moduleName", "return import(moduleName)") as (
     moduleName: string
@@ -21,7 +28,7 @@ async function importPg() {
     default?: Record<string, unknown>;
   };
   const ClientCtor = (mod["Client"] ?? mod.default?.["Client"]) as
-    | (new (config: { connectionString: string }) => PgClient)
+    | (new (config: PgClientConfig) => PgClient)
     | undefined;
   if (!ClientCtor) {
     throw new Error("Postgres backend selected but 'pg' is not installed.");
@@ -30,22 +37,62 @@ async function importPg() {
 }
 
 export class PostgresStateStore implements StateStore {
-  constructor(private readonly connectionString: string) {}
+  constructor(
+    private readonly connectionString: string,
+    private readonly options?: {
+      connectTimeoutMs?: number;
+      queryTimeoutMs?: number;
+      operationTimeoutMs?: number;
+    }
+  ) {}
+
+  private withTimeout<T>(promise: Promise<T>, ms: number, label: string) {
+    let timer: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Postgres ${label} timed out after ${ms}ms`));
+      }, ms);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+      if (timer) clearTimeout(timer);
+    }) as Promise<T>;
+  }
 
   private async withClient<T>(fn: (client: PgClient) => Promise<T>) {
     const ClientCtor = await importPg();
-    const client = new ClientCtor({ connectionString: this.connectionString });
+    const connectTimeoutMs = this.options?.connectTimeoutMs ?? 2500;
+    const queryTimeoutMs = this.options?.queryTimeoutMs ?? 3000;
+    const operationTimeoutMs = this.options?.operationTimeoutMs ?? 3500;
+
+    const client = new ClientCtor({
+      connectionString: this.connectionString,
+      connectionTimeoutMillis: connectTimeoutMs,
+      statement_timeout: queryTimeoutMs,
+      query_timeout: queryTimeoutMs,
+    });
     try {
-      await client.query("BEGIN");
-      await client.query(TABLE_SQL);
-      const result = await fn(client);
-      await client.query("COMMIT");
+      const op = (async () => {
+        await client.query("BEGIN");
+        await client.query(TABLE_SQL);
+        const result = await fn(client);
+        await client.query("COMMIT");
+        return result;
+      })();
+      const result = await this.withTimeout(op, operationTimeoutMs, "operation");
       return result;
     } catch (error) {
-      await client.query("ROLLBACK");
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Ignore rollback failures after timeout/network errors.
+      }
       throw error;
     } finally {
-      await client.end();
+      try {
+        await client.end();
+      } catch {
+        // Ignore end failures on already-broken connections.
+      }
     }
   }
 

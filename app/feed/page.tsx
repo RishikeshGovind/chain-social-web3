@@ -102,15 +102,6 @@ function sanitizeDisplayContent(raw?: string): string {
 
 const URL_SPLIT_REGEX = /(https?:\/\/[^\s]+)/gi;
 
-function readLensAuthHint() {
-  if (!hasFunctionalConsent()) return null;
-  try {
-    return localStorage.getItem("lensAuthenticated");
-  } catch {
-    return null;
-  }
-}
-
 function setLensAuthHint(value: "1" | null) {
   if (!hasFunctionalConsent()) return;
   try {
@@ -209,12 +200,6 @@ export default function FeedPage() {
       setIsAuthReady(true);
     }
   }, [authenticated]);
-
-  useEffect(() => {
-    if (readLensAuthHint() === "1") {
-      setIsLensAuthenticated(true);
-    }
-  }, []);
 
   useEffect(() => {
     setBookmarkedPostIds(readBookmarks());

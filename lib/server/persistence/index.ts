@@ -1,12 +1,29 @@
 import path from "node:path";
 import { FileStateStore } from "./file-state-store";
+import { FailoverStateStore } from "./failover-state-store";
 import { PostgresStateStore } from "./postgres-state-store";
 import type { StateStore } from "./types";
 
 let singleton: StateStore | null = null;
 
+function parsePositiveInt(value: string | undefined, fallback: number) {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean) {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 export function getStateStore(): StateStore {
   if (singleton) return singleton;
+
+  const filePath =
+    process.env.CHAINSOCIAL_STATE_FILE?.trim() || path.join(process.cwd(), "data", "posts.json");
+  const fileStore = new FileStateStore(filePath);
 
   const backend = (process.env.CHAINSOCIAL_STATE_BACKEND ?? "file").trim().toLowerCase();
   if (backend === "postgres") {
@@ -14,12 +31,33 @@ export function getStateStore(): StateStore {
     if (!connectionString) {
       throw new Error("CHAINSOCIAL_STATE_BACKEND=postgres requires DATABASE_URL");
     }
-    singleton = new PostgresStateStore(connectionString);
+    const postgresStore = new PostgresStateStore(connectionString, {
+      connectTimeoutMs: parsePositiveInt(process.env.CHAINSOCIAL_DB_CONNECT_TIMEOUT_MS, 2500),
+      queryTimeoutMs: parsePositiveInt(process.env.CHAINSOCIAL_DB_QUERY_TIMEOUT_MS, 3000),
+      operationTimeoutMs: parsePositiveInt(process.env.CHAINSOCIAL_DB_OPERATION_TIMEOUT_MS, 3500),
+    });
+    const failoverEnabled = parseBoolean(
+      process.env.CHAINSOCIAL_STATE_FAILOVER_TO_FILE,
+      true
+    );
+
+    singleton = failoverEnabled
+      ? new FailoverStateStore(postgresStore, fileStore, {
+          cooldownMs: parsePositiveInt(process.env.CHAINSOCIAL_DB_FAILOVER_COOLDOWN_MS, 30000),
+          warnPrefix: "[StateStore/PostgresFailover]",
+        })
+      : postgresStore;
     return singleton;
   }
 
-  const filePath =
-    process.env.CHAINSOCIAL_STATE_FILE?.trim() || path.join(process.cwd(), "data", "posts.json");
-  singleton = new FileStateStore(filePath);
+  singleton = fileStore;
   return singleton;
+}
+
+export function isPrimaryStateStoreHealthy(): boolean {
+  const store = getStateStore();
+  if (store instanceof FailoverStateStore) {
+    return store.isPrimaryAvailable();
+  }
+  return true;
 }

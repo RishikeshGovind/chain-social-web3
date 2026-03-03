@@ -3,6 +3,10 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { lensRequest } from "@/lib/lens";
+import {
+  getActorAddressFromLensToken,
+  isTokenExpired,
+} from "@/lib/server/auth/lens-actor";
 
 type RefreshResponse = {
   refresh: {
@@ -17,16 +21,16 @@ type RefreshResponse = {
 export async function GET() {
   try {
     const cookieStore = await cookies();
-    const accessToken = cookieStore.get("lensAccessToken")?.value;
-    const refreshToken = cookieStore.get("lensRefreshToken")?.value;
+    let accessToken = cookieStore.get("lensAccessToken")?.value ?? null;
+    let refreshToken = cookieStore.get("lensRefreshToken")?.value ?? null;
+    let refreshed = false;
 
     console.log("[Session] Checking cookies - accessToken exists:", !!accessToken, "refreshToken exists:", !!refreshToken);
 
-    if (!accessToken) {
+    const refreshIfPossible = async () => {
       if (!refreshToken) {
-        return NextResponse.json({ authenticated: false, reason: "no_access_token" });
+        return null;
       }
-
       try {
         const data = await lensRequest<RefreshResponse>(
           `
@@ -53,51 +57,78 @@ export async function GET() {
         const refreshedAccess = data.refresh?.accessToken;
         const refreshedRefresh = data.refresh?.refreshToken;
         if (!refreshedAccess || !refreshedRefresh) {
-          return NextResponse.json({
-            authenticated: false,
+          return {
+            ok: false as const,
             reason: data.refresh?.reason || "refresh_failed",
-          });
+          };
         }
 
-        const response = NextResponse.json({
-          authenticated: true,
-          hasRefreshToken: true,
-          refreshed: true,
-        });
-        const secure = process.env.NODE_ENV === "production";
-        response.cookies.set("lensAccessToken", refreshedAccess, {
-          httpOnly: true,
-          secure,
-          sameSite: "lax",
-          path: "/",
-          maxAge: 60 * 60 * 24,
-        });
-        response.cookies.set("lensRefreshToken", refreshedRefresh, {
-          httpOnly: true,
-          secure,
-          sameSite: "lax",
-          path: "/",
-          maxAge: 60 * 60 * 24 * 30,
-        });
-        return response;
+        accessToken = refreshedAccess;
+        refreshToken = refreshedRefresh;
+        refreshed = true;
+        return { ok: true as const };
       } catch (refreshError) {
         const reason =
           refreshError instanceof Error ? refreshError.message : "refresh_exception";
+        return { ok: false as const, reason };
+      }
+    };
+
+    if (!accessToken || isTokenExpired(accessToken)) {
+      const refreshResult = await refreshIfPossible();
+      if (!refreshResult?.ok) {
         return NextResponse.json({
           authenticated: false,
-          hasRefreshToken: true,
-          degraded: true,
-          reason,
+          hasRefreshToken: !!refreshToken,
+          reason: refreshResult?.reason || "no_access_token",
         });
       }
     }
 
-    // Just check if the token exists and is not empty
-    // The actual API requests will validate if it's expired
-    return NextResponse.json({
+    let actorAddress = accessToken
+      ? await getActorAddressFromLensToken(accessToken)
+      : null;
+
+    // Token may still be stale from actor perspective; refresh once.
+    if (!actorAddress && !refreshed) {
+      const refreshResult = await refreshIfPossible();
+      if (refreshResult?.ok && accessToken) {
+        actorAddress = await getActorAddressFromLensToken(accessToken);
+      }
+    }
+
+    if (!actorAddress) {
+      return NextResponse.json({
+        authenticated: false,
+        hasRefreshToken: !!refreshToken,
+        reason: "actor_unresolved",
+      });
+    }
+
+    const response = NextResponse.json({
       authenticated: true,
       hasRefreshToken: !!refreshToken,
+      actorAddress,
+      refreshed,
     });
+    if (refreshed && accessToken && refreshToken) {
+      const secure = process.env.NODE_ENV === "production";
+      response.cookies.set("lensAccessToken", accessToken, {
+        httpOnly: true,
+        secure,
+        sameSite: "lax",
+        path: "/",
+        maxAge: 60 * 60 * 24,
+      });
+      response.cookies.set("lensRefreshToken", refreshToken, {
+        httpOnly: true,
+        secure,
+        sameSite: "lax",
+        path: "/",
+        maxAge: 60 * 60 * 24 * 30,
+      });
+    }
+    return response;
   } catch (error) {
     console.error("Session check error:", error);
     return NextResponse.json({ authenticated: false, reason: "error" });

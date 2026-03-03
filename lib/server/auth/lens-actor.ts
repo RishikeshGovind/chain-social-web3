@@ -67,6 +67,17 @@ function findAddressInGraph(value: unknown): string | null {
   return null;
 }
 
+function findAddressInClaims(payload: Record<string, unknown>): string | null {
+  const candidateKeys = ["sub", "address", "wallet", "owner", "account", "actor", "managedBy"];
+  for (const key of candidateKeys) {
+    if (!(key in payload)) continue;
+    const value = payload[key];
+    const found = findAddressInGraph(value);
+    if (found) return found;
+  }
+  return null;
+}
+
 async function resolveActorAddressFromLens(accessToken: string): Promise<string | null> {
   const cached = actorCache.get(accessToken);
   if (cached && cached.expiresAtMs > Date.now()) {
@@ -84,15 +95,6 @@ async function resolveActorAddressFromLens(accessToken: string): Promise<string 
               address
             }
           }
-          ... on AuthenticatedUser {
-            address
-            account {
-              address
-            }
-            wallet {
-              address
-            }
-          }
         }
       }
     `,
@@ -106,29 +108,22 @@ async function resolveActorAddressFromLens(accessToken: string): Promise<string 
               address
             }
           }
-          ... on User {
-            address
-            account {
-              address
-            }
-            wallet {
-              address
-            }
-          }
         }
       }
     `,
     `
-      query AuthenticatedUser {
-        authenticatedUser {
+      query MeAddress {
+        me {
           __typename
           address
-          account {
-            address
-          }
-          wallet {
-            address
-          }
+        }
+      }
+    `,
+    `
+      query ViewerAddress {
+        viewer {
+          __typename
+          address
         }
       }
     `,
@@ -160,17 +155,32 @@ async function resolveActorAddressFromLens(accessToken: string): Promise<string 
     }
   }
 
+  const payload = parseJwtPayload(accessToken);
+  if (payload) {
+    const claimAddress = findAddressInClaims(payload);
+    if (claimAddress) {
+      actorCache.set(accessToken, {
+        address: claimAddress,
+        expiresAtMs: Date.now() + ACTOR_CACHE_TTL_MS,
+      });
+      return claimAddress;
+    }
+  }
+
   return null;
+}
+
+export async function getActorAddressFromLensToken(accessToken: string) {
+  if (!accessToken) return null;
+  if (isTokenExpired(accessToken)) return null;
+  return resolveActorAddressFromLens(accessToken);
 }
 
 export async function getActorAddressFromLensCookie() {
   const cookieStore = await cookies();
   const lensToken = cookieStore.get("lensAccessToken")?.value;
 
-  if (!lensToken) return null;
-  if (isTokenExpired(lensToken)) return null;
-
-  return resolveActorAddressFromLens(lensToken);
+  return getActorAddressFromLensToken(lensToken ?? "");
 }
 
 export async function getLensAccessTokenFromCookie() {
