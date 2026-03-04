@@ -1,6 +1,102 @@
 {
   "posts": [
     {
+      "id": "0x01c88691e760031c2a01211e60a5495102f36235cb886feaa891d81dcf1a7d01",
+      "timestamp": "2026-03-04T18:10:27.940Z",
+      "metadata": {
+        "content": "Experts suggest that while AI will automate many tasks, it is currently \"augmenting\" rather than \"replacing\" most human roles, though entry-level developer positions are seeing a significant impact"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x6b79e59611e15afc14c5661090abe413bc91503c7cef3516956ceb07e4be79a7",
+      "timestamp": "2026-03-04T17:34:54.644Z",
+      "metadata": {
+        "content": "Scientific knowledge is disseminated through scientific articles, where data and metadata are described in natural language, rendering comparative analysis of experiments very difficult."
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0xc630783550f8f6fe8aedbe2ccde98d2fe096bbd62d27e5e158595236aafba5e1",
+      "timestamp": "2026-03-04T17:34:14.802Z",
+      "metadata": {
+        "content": "With computational power constantly accelerating, we find that bottlenecks for analyzing scientific data lie not in the availability of said power, but in the availability of the data for analysis."
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0xc078babe965bf8e07a394a6741d7bf3db77106a2bd468387a1017ee6c882b3ca",
+      "timestamp": "2026-03-04T15:15:25.246Z",
+      "metadata": {
+        "content": "The NASDAQ 100 and S&P 500 both dropped nearly 2% as investors pivoted to a \"risk-off\" mentality"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0xc280de2295e825e0b18286a2f20ff7369eff1e362afbff9cbf54002cced791b0",
+      "timestamp": "2026-03-04T15:15:13.006Z",
+      "metadata": {
+        "content": "Rising energy prices have led markets to anticipate that the Federal Reserve will be unable to cut interest rates in an inflationary environment"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x9ef683d8d14123d6acb3c0827d2217187630be6a2446d8cd371370d70221a679",
+      "timestamp": "2026-03-04T15:14:45.802Z",
+      "metadata": {
+        "content": "Crude oil experienced its biggest move since 2022, with WTI hitting $77 and Brent surging to $85 due to threats against energy infrastructure in the Middle East and blockages in the Strait of Hormuz"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0xc4f3cb8354fafa64a925260d704bd8985e57229ff00e61cd13eb16399d6b8976",
+      "timestamp": "2026-03-04T14:50:13.510Z",
+      "metadata": {
+        "content": "The NASDAQ 100 and S&P 500 both dropped nearly 2% as investors pivoted to a \"risk-off\" mentality"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x2287a47e931bbaf9c27400bde021312c72ae171f8a68fcf543f0ce74ce67b35b",
+      "timestamp": "2026-03-04T14:45:36.643Z",
+      "metadata": {
+        "content": "The NASDAQ 100 and S&P 500 both dropped nearly 2% as investors pivoted to a \"risk-off\" mentality"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
       "id": "4bb5247d-4403-4b10-8145-ffe5268b8acc",
       "timestamp": "2026-03-03T17:32:28.361Z",
       "metadata": {

@@ -69,6 +69,10 @@ const LOCAL_MERGE_TIMEOUT_MS = Number.parseInt(
   process.env.CHAINSOCIAL_LENS_LOCAL_MERGE_TIMEOUT_MS ?? "700",
   10
 );
+const LOCAL_READ_TIMEOUT_MS = Number.parseInt(
+  process.env.CHAINSOCIAL_LOCAL_READ_TIMEOUT_MS ?? "1200",
+  10
+);
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | null = null;
@@ -80,6 +84,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function safeTimeout(value: number, fallback: number) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function isRecentTimestamp(timestamp: string, windowMs: number) {
@@ -286,12 +294,26 @@ export async function GET(req: Request) {
           "Lens feed fetch failed, falling back to local store:",
           lensMessage
         );
-        try {
-          const localData = await listPosts({
-            limit: boundedLimit,
-            cursor,
-            author,
+        if (!isPrimaryStateStoreHealthy()) {
+          return NextResponse.json({
+            posts: [],
+            nextCursor: null,
+            source: "local",
+            resolvedAuthor: author ?? null,
+            lensFallbackError: lensMessage,
+            localFallbackError: "primary state store unhealthy",
           });
+        }
+        try {
+          const localData = await withTimeout(
+            listPosts({
+              limit: boundedLimit,
+              cursor,
+              author,
+            }),
+            safeTimeout(LOCAL_READ_TIMEOUT_MS, 1200),
+            "local fallback posts read"
+          );
           return NextResponse.json({
             ...localData,
             source: "local",
@@ -316,12 +338,25 @@ export async function GET(req: Request) {
     }
 
     let localData;
-    try {
-      localData = await listPosts({
-        limit: boundedLimit,
-        cursor,
-        author,
+    if (!isPrimaryStateStoreHealthy()) {
+      return NextResponse.json({
+        posts: [],
+        nextCursor: null,
+        source: "local",
+        resolvedAuthor: author ?? null,
+        localFallbackError: "primary state store unhealthy",
       });
+    }
+    try {
+      localData = await withTimeout(
+        listPosts({
+          limit: boundedLimit,
+          cursor,
+          author,
+        }),
+        safeTimeout(LOCAL_READ_TIMEOUT_MS, 1200),
+        "local posts read"
+      );
     } catch (localError) {
       const localMessage =
         localError instanceof Error ? localError.message : "local feed unavailable";
@@ -423,19 +458,18 @@ export async function POST(req: Request) {
           media,
         });
         // Mirror successful Lens posts to local store so they persist in UI even
-        // when Lens indexing/session is delayed.
-        try {
-          await createPost({
-            id: post.id,
-            timestamp: post.timestamp,
-            address: lensAccountAddress,
-            content: parsedContent.content,
-            username,
-            media,
-          });
-        } catch (mirrorError) {
+        // when Lens indexing/session is delayed. Keep this non-blocking so
+        // Postgres failover/read timeouts never delay the user-visible response.
+        void createPost({
+          id: post.id,
+          timestamp: post.timestamp,
+          address: lensAccountAddress,
+          content: parsedContent.content,
+          username,
+          media,
+        }).catch((mirrorError) => {
           console.warn("[Post API] Local mirror write failed:", mirrorError);
-        }
+        });
         console.log("[Post API] Lens post created:", post.id);
         return NextResponse.json({ success: true, post, source: "lens" });
       } catch (lensError) {

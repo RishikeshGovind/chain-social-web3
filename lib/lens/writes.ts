@@ -56,40 +56,27 @@ async function executeVariants(variants: MutationVariant[], accessToken: string)
   throw new Error("No Lens mutation variant succeeded");
 }
 
-// Historically the Lens API accepted raw `content` strings, but newer
-// versions mandate a `contentUri` field that points to metadata hosted at a
-// publicly accessible URI. For compatibility we build a small JSON document and
-// embed it as a `data:` URI so no external upload is required. The object is
-// simple enough for most feed consumers, and it keeps the example self‑contained.
+// Lens expects a URI for publication metadata. To avoid external upload
+// requirements in local/dev usage, we inline a compact JSON document into a
+// data URI. Keep this payload intentionally small to reduce URI parser issues.
 export function buildContentUri(content: string, media?: string[]): string {
-  // Build Lens v3 compatible metadata structure
   const metadata: Record<string, unknown> = {
-    $schema: "https://json-schemas.lens.dev/publications/text-only/3.0.0.json",
-    lens: {
-      mainContentFocus: "TEXT_ONLY",
-      content,
-      locale: "en",
-      id: randomUUID(),
-    },
+    version: "3.0.0",
+    mainContentFocus: "TEXT_ONLY",
+    content,
+    id: randomUUID(),
+    locale: "en",
   };
-  
+
   if (media && media.length > 0) {
-    metadata.lens = {
-      ...(metadata.lens as Record<string, unknown>),
-      mainContentFocus: "IMAGE",
-      image: {
-        item: media[0],
-        type: "image/jpeg",
-      },
-      attachments: media.map((url) => ({
-        item: url,
-        type: "image/jpeg",
-      })),
-    };
+    metadata.mainContentFocus = "IMAGE";
+    metadata.image = { item: media[0] };
+    metadata.attachments = media.map((url) => ({ item: url }));
   }
-  
+
   const json = JSON.stringify(metadata);
-  return `data:application/json,${encodeURIComponent(json)}`;
+  const base64 = Buffer.from(json, "utf8").toString("base64");
+  return `data:application/json;base64,${base64}`;
 }
 
 /**
@@ -178,8 +165,13 @@ export async function createLensPost(params: {
       params.content,
       params.media
     );
-    // debug: log shape once to aid diagnosing schema mismatches during development
-    console.log("[Lens] createPost request:", JSON.stringify(requestBody, null, 2));
+    // Avoid logging full data URI payloads (large + user content); log shape only.
+    console.log("[Lens] createPost request:", {
+      hasContentUri: typeof requestBody.contentUri === "string",
+      contentUriLength:
+        typeof requestBody.contentUri === "string" ? requestBody.contentUri.length : 0,
+      hasMedia: !!params.media?.length,
+    });
     console.log("[Lens] createPost actorAddress:", params.actorAddress);
 
     // simulate before making network call (tests only)

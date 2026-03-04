@@ -69,6 +69,16 @@ function getMediaKind(url: string): "video" | "gif" | "image" {
   return "image";
 }
 
+function postSignature(post: ProfilePost) {
+  const content = post.metadata?.content?.trim() ?? "";
+  const media = (post.metadata?.media ?? []).join("|");
+  return `${post.author.address.toLowerCase()}|${content}|${media}`;
+}
+
+function isEvmAddress(value: string) {
+  return /^0x[a-f0-9]{40}$/i.test(value);
+}
+
 export default function UserProfilePage({ params }: { params: { address: string } }) {
   const [posts, setPosts] = useState<ProfilePost[]>([]);
   const [postsSource, setPostsSource] = useState<"lens" | "local" | null>(null);
@@ -174,19 +184,56 @@ export default function UserProfilePage({ params }: { params: { address: string 
     setError(null);
     (async () => {
       try {
-        const lensData = await fetch(
-          `/api/posts?author=${params.address}&limit=20&quick=1`,
-          {
-            cache: "no-store",
-          }
-        ).then((res) => res.json());
+        const aliasSet = new Set<string>([params.address.toLowerCase()]);
+        if (targetAddress === viewerAddress || targetAddress === viewerLensAccountAddress) {
+          if (viewerAddress) aliasSet.add(viewerAddress.toLowerCase());
+          if (viewerLensAccountAddress) aliasSet.add(viewerLensAccountAddress.toLowerCase());
+        }
+        const authors = Array.from(aliasSet).filter((address) => isEvmAddress(address));
+        const primaryAuthor = authors[0] ?? params.address.toLowerCase();
 
-        const postsData =
-          Array.isArray(lensData?.posts) && lensData.posts.length > 0
-            ? lensData
-            : await fetch(`/api/posts?author=${params.address}&limit=20&source=local`, {
-                cache: "no-store",
-              }).then((res) => res.json());
+        const responses = await Promise.all(
+          authors.map(async (author) => {
+            const lensData = await fetch(`/api/posts?author=${author}&limit=20&quick=1`, {
+              cache: "no-store",
+            }).then((res) => res.json());
+            const effectiveAuthor =
+              typeof lensData?.resolvedAuthor === "string" && lensData.resolvedAuthor
+                ? lensData.resolvedAuthor
+                : author;
+            const localData = await fetch(
+              `/api/posts?author=${effectiveAuthor}&limit=20&source=local`,
+              { cache: "no-store" }
+            ).then((res) => res.json());
+            return { author, lensData, localData, effectiveAuthor };
+          })
+        );
+
+        const primary = responses.find((item) => item.author === primaryAuthor) ?? responses[0];
+        const lensPosts = responses.flatMap((item) =>
+          Array.isArray(item.lensData?.posts) ? (item.lensData.posts as ProfilePost[]) : []
+        );
+        const localPosts = responses.flatMap((item) =>
+          Array.isArray(item.localData?.posts) ? (item.localData.posts as ProfilePost[]) : []
+        );
+        const seenIds = new Set<string>();
+        const seenSigs = new Set<string>();
+        const mergedPosts: ProfilePost[] = [];
+
+        for (const post of [...localPosts, ...lensPosts]) {
+          if (seenIds.has(post.id)) continue;
+          const sig = postSignature(post);
+          if (seenSigs.has(sig)) continue;
+          seenIds.add(post.id);
+          seenSigs.add(sig);
+          mergedPosts.push(post);
+        }
+
+        const postsData = {
+          ...(primary?.lensData ?? {}),
+          posts: mergedPosts,
+          resolvedAuthor: primary?.effectiveAuthor ?? primaryAuthor,
+        };
 
         if (cancelled) return;
         setPosts(postsData.posts || []);
@@ -206,7 +253,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
     return () => {
       cancelled = true;
     };
-  }, [params.address]);
+  }, [params.address, targetAddress, viewerAddress, viewerLensAccountAddress]);
 
   async function loadMorePosts() {
     if (!nextCursor || !resolvedAuthor || loadingMore) return;
