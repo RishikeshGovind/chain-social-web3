@@ -1,6 +1,45 @@
 {
   "posts": [
     {
+      "id": "0xe9c48df1258bb5b9b1286480718865b0cfa6f6a2d4387a261cb96ae3ade481b6",
+      "timestamp": "2026-03-05T18:20:05.558Z",
+      "chainPostId": "0xe9c48df1258bb5b9b1286480718865b0cfa6f6a2d4387a261cb96ae3ade481b6",
+      "publishStatus": "published",
+      "indexedAt": "2026-03-05T18:20:05.558Z",
+      "metadata": {
+        "content": "gm"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x97647990469df71efb4c793c991f25fa8956f379eb224a65195d33511a9410c9",
+      "timestamp": "2026-03-05T17:14:13.552Z",
+      "metadata": {
+        "content": "The Neo uses a mobile processor (comparable to the iPhone 16 Pro) rather than the high-end M5 chip, targeting the Chromebook and budget Windows PC markets"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x5029602a5aaea28bd611c7c36afc47b12de1ebe8c71d40fc89b3ff4fea149506",
+      "timestamp": "2026-03-05T17:13:53.776Z",
+      "metadata": {
+        "content": "Apple unveiled the MacBook Neo, starting at $599—roughly $400 cheaper than its standard entry-level laptops"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
       "id": "0x01c88691e760031c2a01211e60a5495102f36235cb886feaa891d81dcf1a7d01",
       "timestamp": "2026-03-04T18:10:27.940Z",
       "metadata": {
@@ -143,7 +182,10 @@
         "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0"
       },
       "likes": [],
-      "reposts": []
+      "reposts": [],
+      "publishStatus": "published",
+      "chainPostId": "0x4e0c8c917e7066b902a9bd88cbbfe78079984b2b2a82c3f4b98776b03b33aef9",
+      "indexedAt": "2026-03-05T18:15:35.115Z"
     },
     {
       "id": "0109fd7c-4a82-4e5e-8dc0-b1658212100b",
@@ -156,7 +198,10 @@
         "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0"
       },
       "likes": [],
-      "reposts": []
+      "reposts": [],
+      "publishStatus": "published",
+      "chainPostId": "0x34590f806889788b3b2af2a97e8e0c6181249d30d453b4a052f6d5d29c4f4295",
+      "indexedAt": "2026-03-05T18:15:33.388Z"
     },
     {
       "id": "5cf66346-ce71-42db-a43f-352c250676c1",
@@ -169,7 +214,10 @@
         "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0"
       },
       "likes": [],
-      "reposts": []
+      "reposts": [],
+      "publishStatus": "published",
+      "chainPostId": "0xe6a590f8108a3b451edf923bc59bc55746526e5f2b53ebaafa3b76437d5d4780",
+      "indexedAt": "2026-03-05T18:15:17.914Z"
     },
     {
       "id": "04eead93-95a2-429f-baa0-c0174cee4908",
@@ -389,6 +437,47 @@
       "postId": "26572576482456547749988636803540499062398469670936780873386806138919887804892",
       "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0",
       "createdAt": "2026-02-27T18:26:24.938Z"
+    }
+  ],
+  "postOutbox": [
+    {
+      "id": "a439e26b-412b-4d87-a6ea-2afd2d3ea607",
+      "postId": "00173d7c-adbc-4f35-8a07-4aa9c84f2e18",
+      "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0",
+      "content": "hi",
+      "media": [],
+      "status": "published",
+      "attempts": 1,
+      "createdAt": "2026-03-05T18:15:14.637Z",
+      "updatedAt": "2026-03-05T18:15:35.115Z",
+      "chainPostId": "0x4e0c8c917e7066b902a9bd88cbbfe78079984b2b2a82c3f4b98776b03b33aef9",
+      "publishedAt": "2026-03-05T18:15:35.115Z"
+    },
+    {
+      "id": "192edeb1-82f6-4d2a-9f82-8afa4e8ed068",
+      "postId": "0109fd7c-4a82-4e5e-8dc0-b1658212100b",
+      "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0",
+      "content": "hi",
+      "media": [],
+      "status": "published",
+      "attempts": 1,
+      "createdAt": "2026-03-05T18:15:14.637Z",
+      "updatedAt": "2026-03-05T18:15:33.388Z",
+      "chainPostId": "0x34590f806889788b3b2af2a97e8e0c6181249d30d453b4a052f6d5d29c4f4295",
+      "publishedAt": "2026-03-05T18:15:33.388Z"
+    },
+    {
+      "id": "8606c0aa-5625-407b-9ef9-c2b274c30abd",
+      "postId": "5cf66346-ce71-42db-a43f-352c250676c1",
+      "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0",
+      "content": "hi",
+      "media": [],
+      "status": "published",
+      "attempts": 1,
+      "createdAt": "2026-03-05T18:15:14.637Z",
+      "updatedAt": "2026-03-05T18:15:17.914Z",
+      "chainPostId": "0xe6a590f8108a3b451edf923bc59bc55746526e5f2b53ebaafa3b76437d5d4780",
+      "publishedAt": "2026-03-05T18:15:17.914Z"
     }
   ]
 }

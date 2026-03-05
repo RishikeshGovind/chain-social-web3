@@ -8,7 +8,8 @@ ChainSocial is a Next.js app for experimenting with a web3 social feed.
 2. Create `.env.local` with:
    - `NEXT_PUBLIC_PRIVY_APP_ID=<your_privy_app_id>`
    - `LENS_APP_ADDRESS=<your_lens_app_address>`
-   - `LENS_POSTS_SOURCE=local` (or `lens` to pull feed data from Lens API)
+   - `LENS_POSTS_SOURCE=lens`
+   - `CHAINSOCIAL_CHAIN_ONLY_WRITES=true`
    - `LENS_API_URL=https://api.lens.xyz/graphql` (recommended explicit Lens endpoint)
    - optional production backends:
      - `CHAINSOCIAL_STATE_BACKEND=file|postgres`
@@ -81,6 +82,9 @@ If Lens queries or mutations fail, routes automatically fall back to local store
 - `DELETE /api/posts/:id`: delete your own post.
 - `GET /api/follows/:address`: follower/following counts + viewer follow state.
 - `PATCH /api/follows/:address/toggle`: follow or unfollow a profile.
+- `GET|POST /api/posts/migration`: legacy local UUID migration outbox (authenticated).
+  - `POST` body `{ "action": "enqueue", "limit": 100 }` to enqueue local-only posts.
+  - `POST` body `{ "action": "process", "limit": 25 }` to publish queued posts to Lens.
 
 Legacy compatibility route remains available at `app/api/lens/create-post/route.ts`.
 

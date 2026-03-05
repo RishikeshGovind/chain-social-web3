@@ -1066,6 +1066,16 @@ export default function FeedPage() {
               const isEditing = editingPostId === post.id;
               const repliesOpen = !!expandedReplies[post.id];
               const replies = repliesByPost[post.id] ?? [];
+              const rawUsername = post.author.username?.localName?.trim() ?? "";
+              const hasDistinctUsername =
+                rawUsername.length > 0 &&
+                rawUsername.toLowerCase() !== post.author.address.toLowerCase();
+              const primaryAuthorLabel = hasDistinctUsername
+                ? rawUsername
+                : post.author.address;
+              const secondaryAuthorLabel = hasDistinctUsername
+                ? post.author.address
+                : "";
 
               return (
                 <div
@@ -1085,14 +1095,15 @@ export default function FeedPage() {
                         />
                         <Link
                           href={`/profile/${post.author.address}`}
-                          className="font-semibold hover:underline inline-block align-middle"
+                          className="font-semibold hover:underline inline-block align-middle max-w-[18rem] break-all"
                         >
-                          {post.author.username?.localName ||
-                            post.author.address}
+                          {primaryAuthorLabel}
                         </Link>
-                        <span className="text-xs text-gray-500">
-                          {post.author.address}
-                        </span>
+                        {secondaryAuthorLabel && (
+                          <span className="text-xs text-gray-500 break-all max-w-[18rem]">
+                            {secondaryAuthorLabel}
+                          </span>
+                        )}
                         {post.optimistic && (
                           <span className="text-xs text-amber-400">Sending...</span>
                         )}

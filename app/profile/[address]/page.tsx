@@ -75,8 +75,47 @@ function postSignature(post: ProfilePost) {
   return `${post.author.address.toLowerCase()}|${content}|${media}`;
 }
 
+function profilePostsCacheKey(address: string) {
+  return `chainsocial:profile-posts:${address.toLowerCase()}`;
+}
+
+function readCachedProfilePosts(address: string): ProfilePost[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.sessionStorage.getItem(profilePostsCacheKey(address));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ProfilePost[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedProfilePosts(address: string, posts: ProfilePost[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(profilePostsCacheKey(address), JSON.stringify(posts.slice(0, 200)));
+  } catch {
+    // Ignore storage quota/errors.
+  }
+}
+
 function isEvmAddress(value: string) {
   return /^0x[a-f0-9]{40}$/i.test(value);
+}
+
+async function fetchJsonWithTimeout(url: string, timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export default function UserProfilePage({ params }: { params: { address: string } }) {
@@ -180,6 +219,11 @@ export default function UserProfilePage({ params }: { params: { address: string 
 
   useEffect(() => {
     let cancelled = false;
+    const cached = readCachedProfilePosts(params.address);
+    if (cached.length > 0) {
+      setPosts(cached);
+      setLoading(false);
+    }
     setLoading(true);
     setError(null);
     (async () => {
@@ -201,11 +245,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
               typeof lensData?.resolvedAuthor === "string" && lensData.resolvedAuthor
                 ? lensData.resolvedAuthor
                 : author;
-            const localData = await fetch(
-              `/api/posts?author=${effectiveAuthor}&limit=20&source=local`,
-              { cache: "no-store" }
-            ).then((res) => res.json());
-            return { author, lensData, localData, effectiveAuthor };
+            return { author, lensData, effectiveAuthor };
           })
         );
 
@@ -213,9 +253,19 @@ export default function UserProfilePage({ params }: { params: { address: string 
         const lensPosts = responses.flatMap((item) =>
           Array.isArray(item.lensData?.posts) ? (item.lensData.posts as ProfilePost[]) : []
         );
-        const localPosts = responses.flatMap((item) =>
-          Array.isArray(item.localData?.posts) ? (item.localData.posts as ProfilePost[]) : []
-        );
+        let localPosts: ProfilePost[] = [];
+        const localAuthor = primary?.effectiveAuthor ?? primaryAuthor;
+        try {
+          const localData = await fetchJsonWithTimeout(
+            `/api/posts?author=${localAuthor}&limit=20&source=local`,
+            1200
+          );
+          if (Array.isArray(localData?.posts)) {
+            localPosts = localData.posts as ProfilePost[];
+          }
+        } catch {
+          // Best-effort local mirror fetch; ignore timeout/errors to keep profile responsive.
+        }
         const seenIds = new Set<string>();
         const seenSigs = new Set<string>();
         const mergedPosts: ProfilePost[] = [];
@@ -229,14 +279,28 @@ export default function UserProfilePage({ params }: { params: { address: string 
           mergedPosts.push(post);
         }
 
+        const cachedPosts = readCachedProfilePosts(params.address);
+        const mergedWithCache: ProfilePost[] = [];
+        const mergedSeenIds = new Set<string>();
+        const mergedSeenSigs = new Set<string>();
+        for (const post of [...mergedPosts, ...cachedPosts]) {
+          if (mergedSeenIds.has(post.id)) continue;
+          const sig = postSignature(post);
+          if (mergedSeenSigs.has(sig)) continue;
+          mergedSeenIds.add(post.id);
+          mergedSeenSigs.add(sig);
+          mergedWithCache.push(post);
+        }
+
         const postsData = {
           ...(primary?.lensData ?? {}),
-          posts: mergedPosts,
+          posts: mergedWithCache,
           resolvedAuthor: primary?.effectiveAuthor ?? primaryAuthor,
         };
 
         if (cancelled) return;
         setPosts(postsData.posts || []);
+        writeCachedProfilePosts(params.address, postsData.posts || []);
         setNextCursor(typeof postsData?.nextCursor === "string" ? postsData.nextCursor : null);
         setPostsSource(postsData?.source === "local" ? "local" : "lens");
         setResolvedAuthor(
@@ -245,7 +309,14 @@ export default function UserProfilePage({ params }: { params: { address: string 
             : params.address
         );
       } catch {
-        if (!cancelled) setError("Failed to load profile posts");
+        if (!cancelled) {
+          const fallback = readCachedProfilePosts(params.address);
+          if (fallback.length > 0) {
+            setPosts(fallback);
+          } else {
+            setError("Failed to load profile posts");
+          }
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -347,12 +418,20 @@ export default function UserProfilePage({ params }: { params: { address: string 
           )}
 
           {isOwnProfile && (
-            <Link
-              href="/profile/edit"
-              className="mb-3 rounded-lg border border-gray-700 px-4 py-1 text-sm hover:bg-gray-900"
-            >
-              Edit Profile
-            </Link>
+            <div className="mb-3 flex items-center gap-2">
+              <Link
+                href="/profile/edit"
+                className="rounded-lg border border-gray-700 px-4 py-1 text-sm hover:bg-gray-900"
+              >
+                Edit Profile
+              </Link>
+              <Link
+                href="/profile/edit"
+                className="rounded-lg border border-blue-700 px-4 py-1 text-sm text-blue-300 hover:bg-blue-950/40"
+              >
+                Migrate Legacy Posts
+              </Link>
+            </div>
           )}
 
           {!isOwnProfile && authenticated && (
@@ -408,92 +487,106 @@ export default function UserProfilePage({ params }: { params: { address: string 
           ) : (
             <div className="space-y-4">
               {sortedPosts.map((post) => (
-                <article
-                  key={post.id}
-                  className="border border-gray-700 bg-gray-900 rounded-2xl p-4 flex gap-4 shadow-sm transition-shadow hover:shadow-lg hover:bg-gray-800"
-                >
-                  <Link href={`/profile/${post.author.address}`} className="shrink-0">
-                    <img
-                      src={avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
-                      alt="avatar"
-                      className="w-10 h-10 rounded-full border border-gray-700 bg-white object-cover"
-                    />
-                  </Link>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Link
-                        href={`/profile/${post.author.address}`}
-                        className="font-semibold hover:underline"
-                      >
-                        {post.author.username?.localName ||
-                          displayName ||
-                          post.author.address}
+                (() => {
+                  const rawUsername = post.author.username?.localName?.trim() ?? "";
+                  const hasDistinctUsername =
+                    rawUsername.length > 0 &&
+                    rawUsername.toLowerCase() !== post.author.address.toLowerCase();
+                  const primaryAuthorLabel = hasDistinctUsername
+                    ? rawUsername
+                    : post.author.address;
+                  const secondaryAuthorLabel = hasDistinctUsername
+                    ? post.author.address
+                    : "";
+                  return (
+                    <article
+                      key={post.id}
+                      className="border border-gray-700 bg-gray-900 rounded-2xl p-4 flex gap-4 shadow-sm transition-shadow hover:shadow-lg hover:bg-gray-800"
+                    >
+                      <Link href={`/profile/${post.author.address}`} className="shrink-0">
+                        <img
+                          src={avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
+                          alt="avatar"
+                          className="w-10 h-10 rounded-full border border-gray-700 bg-white object-cover"
+                        />
                       </Link>
-                      <span className="text-xs text-gray-500">
-                        {post.author.address}
-                      </span>
-                    </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Link
+                            href={`/profile/${post.author.address}`}
+                            className="font-semibold hover:underline max-w-[18rem] break-all"
+                          >
+                            {primaryAuthorLabel}
+                          </Link>
+                          {secondaryAuthorLabel && (
+                            <span className="text-xs text-gray-500 break-all max-w-[18rem]">
+                              {secondaryAuthorLabel}
+                            </span>
+                          )}
+                        </div>
 
-                    <div className="text-white mb-2 whitespace-pre-wrap break-words">
-                      {renderContentWithWrappedLinks(post.metadata?.content)}
-                    </div>
+                        <div className="text-white mb-2 whitespace-pre-wrap break-words">
+                          {renderContentWithWrappedLinks(post.metadata?.content)}
+                        </div>
 
-                    {post.metadata?.media && post.metadata.media.length > 0 && (
-                      <div
-                        className={`mb-2 ${
-                          post.metadata.media.length === 1 ? "max-w-xl" : "grid grid-cols-2 gap-2"
-                        }`}
-                      >
-                        {post.metadata.media.map((url, idx) => {
-                          const mediaKind = getMediaKind(url);
-                          const isSingle = post.metadata!.media!.length === 1;
-                          const frameClass = isSingle
-                            ? "overflow-hidden rounded-xl border border-gray-700 bg-black"
-                            : "overflow-hidden rounded-xl border border-gray-700 bg-black aspect-square";
+                        {post.metadata?.media && post.metadata.media.length > 0 && (
+                          <div
+                            className={`mb-2 ${
+                              post.metadata.media.length === 1 ? "max-w-xl" : "grid grid-cols-2 gap-2"
+                            }`}
+                          >
+                            {post.metadata.media.map((url, idx) => {
+                              const mediaKind = getMediaKind(url);
+                              const isSingle = post.metadata!.media!.length === 1;
+                              const frameClass = isSingle
+                                ? "overflow-hidden rounded-xl border border-gray-700 bg-black"
+                                : "overflow-hidden rounded-xl border border-gray-700 bg-black aspect-square";
 
-                          if (mediaKind === "video") {
-                            return (
-                              <div key={idx} className={frameClass}>
-                                <video
-                                  src={url}
-                                  controls
-                                  className={isSingle ? "w-full max-h-96 object-contain" : "w-full h-full object-cover"}
-                                />
-                              </div>
-                            );
-                          }
+                              if (mediaKind === "video") {
+                                return (
+                                  <div key={idx} className={frameClass}>
+                                    <video
+                                      src={url}
+                                      controls
+                                      className={isSingle ? "w-full max-h-96 object-contain" : "w-full h-full object-cover"}
+                                    />
+                                  </div>
+                                );
+                              }
 
-                          return (
-                            <div key={idx} className={frameClass}>
-                              <img
-                                src={url}
-                                alt="media"
-                                className={
-                                  mediaKind === "gif"
-                                    ? isSingle
-                                      ? "w-full max-h-96 object-contain"
-                                      : "w-full h-full object-contain"
-                                    : isSingle
-                                      ? "w-full max-h-96 object-cover"
-                                      : "w-full h-full object-cover"
-                                }
-                              />
-                            </div>
-                          );
-                        })}
+                              return (
+                                <div key={idx} className={frameClass}>
+                                  <img
+                                    src={url}
+                                    alt="media"
+                                    className={
+                                      mediaKind === "gif"
+                                        ? isSingle
+                                          ? "w-full max-h-96 object-contain"
+                                          : "w-full h-full object-contain"
+                                        : isSingle
+                                          ? "w-full max-h-96 object-cover"
+                                          : "w-full h-full object-cover"
+                                    }
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-4 mt-2 text-sm text-gray-400">
+                          <span>Like {post.likes?.length ?? 0}</span>
+                          <span>Repost {post.reposts?.length ?? 0}</span>
+                          <span>Replies {post.replyCount ?? 0}</span>
+                          <span className="text-xs text-gray-500">
+                            {new Date(post.timestamp).toLocaleString()}
+                          </span>
+                        </div>
                       </div>
-                    )}
-
-                    <div className="flex items-center gap-4 mt-2 text-sm text-gray-400">
-                      <span>Like {post.likes?.length ?? 0}</span>
-                      <span>Repost {post.reposts?.length ?? 0}</span>
-                      <span>Replies {post.replyCount ?? 0}</span>
-                      <span className="text-xs text-gray-500">
-                        {new Date(post.timestamp).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                </article>
+                    </article>
+                  );
+                })()
               ))}
               {nextCursor && (
                 <button

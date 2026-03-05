@@ -2,7 +2,16 @@
 
 import { normalizeAddress } from "@/lib/posts/content";
 import { canMutateOwnedResource, canToggleFollow } from "@/lib/posts/authz";
-import type { Follow, ListPostsInput, ListRepliesInput, Post, Reply, Repost } from "@/lib/posts/types";
+import type {
+  Follow,
+  ListPostsInput,
+  ListRepliesInput,
+  Post,
+  PostOutboxItem,
+  PostOutboxStatus,
+  Reply,
+  Repost,
+} from "@/lib/posts/types";
 import { getStateStore } from "@/lib/server/persistence";
 import { randomUUID } from "node:crypto";
 
@@ -11,6 +20,7 @@ type StoreData = {
   replies: Reply[];
   follows: Follow[];
   reposts: Repost[];
+  postOutbox: PostOutboxItem[];
 };
 
 const DEFAULT_POSTS: Post[] = [
@@ -102,7 +112,7 @@ async function loadStore(): Promise<StoreData> {
 
   const parsed = (await getStateStore().read()) as Partial<StoreData> | null;
   if (!parsed) {
-    cachedStore = { posts: DEFAULT_POSTS, replies: [], follows: [], reposts: [] };
+    cachedStore = { posts: DEFAULT_POSTS, replies: [], follows: [], reposts: [], postOutbox: [] };
     await persist(cachedStore);
   } else {
     cachedStore = {
@@ -110,6 +120,7 @@ async function loadStore(): Promise<StoreData> {
       replies: Array.isArray(parsed.replies) ? parsed.replies : [],
       follows: Array.isArray(parsed.follows) ? parsed.follows : [],
       reposts: Array.isArray(parsed.reposts) ? parsed.reposts : [],
+      postOutbox: Array.isArray(parsed.postOutbox) ? parsed.postOutbox : [],
     };
   }
 
@@ -145,6 +156,17 @@ async function loadStore(): Promise<StoreData> {
     ...repost,
     address: normalizeAddress(repost.address),
   }));
+
+  cachedStore.postOutbox = cachedStore.postOutbox
+    .map((item) => ({
+      ...item,
+      address: normalizeAddress(item.address),
+      status: item.status ?? "pending",
+      attempts: Number.isFinite(item.attempts) ? item.attempts : 0,
+      createdAt: item.createdAt ?? new Date().toISOString(),
+      updatedAt: item.updatedAt ?? item.createdAt ?? new Date().toISOString(),
+    }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
   return cachedStore;
 }
@@ -192,12 +214,23 @@ export async function createPost(params: {
   content: string;
   username?: string;
   media?: string[];
+  chainPostId?: string;
+  publishStatus?: "published" | "pending" | "failed" | "local_only";
 }) {
   const store = await loadStore();
+  const inferredPublishStatus =
+    params.publishStatus ??
+    (params.id && /^0x[a-f0-9]{64}$/i.test(params.id) ? "published" : "local_only");
+  const chainPostId =
+    params.chainPostId ??
+    (inferredPublishStatus === "published" && params.id ? params.id : undefined);
 
   const post: Post = {
     id: params.id ?? randomUUID(),
     timestamp: params.timestamp ?? new Date().toISOString(),
+    ...(chainPostId ? { chainPostId } : {}),
+    publishStatus: inferredPublishStatus,
+    indexedAt: new Date().toISOString(),
     metadata: {
       content: params.content,
       ...(params.media ? { media: params.media } : {}),
@@ -219,6 +252,122 @@ export async function createPost(params: {
   store.posts.sort(compareDesc);
   await saveStore(store);
   return { ...post, replyCount: 0 };
+}
+
+function isChainPostId(value: string) {
+  return /^0x[a-f0-9]{64}$/i.test(value);
+}
+
+function isLegacyLocalPost(post: Post) {
+  if (post.publishStatus === "published") return false;
+  return !isChainPostId(post.id);
+}
+
+export async function listLegacyLocalPosts(params?: { address?: string; limit?: number }) {
+  const store = await loadStore();
+  const normalizedAddress = params?.address ? normalizeAddress(params.address) : undefined;
+  const limit = Math.min(Math.max(params?.limit ?? 100, 1), 500);
+  const items = store.posts
+    .filter((post) => (normalizedAddress ? post.author.address === normalizedAddress : true))
+    .filter((post) => isLegacyLocalPost(post))
+    .sort(compareDesc)
+    .slice(0, limit);
+  return items;
+}
+
+export async function listPostOutbox(params?: { address?: string; statuses?: PostOutboxStatus[] }) {
+  const store = await loadStore();
+  const normalizedAddress = params?.address ? normalizeAddress(params.address) : undefined;
+  const statuses = params?.statuses ? new Set(params.statuses) : null;
+  return store.postOutbox.filter((item) => {
+    if (normalizedAddress && item.address !== normalizedAddress) return false;
+    if (statuses && !statuses.has(item.status)) return false;
+    return true;
+  });
+}
+
+export async function enqueueLegacyPostsForMigration(params: { address: string; limit?: number }) {
+  const store = await loadStore();
+  const address = normalizeAddress(params.address);
+  const limit = Math.min(Math.max(params.limit ?? 100, 1), 500);
+  const candidates = store.posts
+    .filter((post) => post.author.address === address && isLegacyLocalPost(post))
+    .sort(compareDesc)
+    .slice(0, limit);
+
+  let enqueued = 0;
+  for (const post of candidates) {
+    const exists = store.postOutbox.find(
+      (item) => item.postId === post.id && item.address === address && item.status !== "published"
+    );
+    if (exists) continue;
+    const now = new Date().toISOString();
+    store.postOutbox.unshift({
+      id: randomUUID(),
+      postId: post.id,
+      address,
+      content: post.metadata.content,
+      media: post.metadata.media,
+      status: "pending",
+      attempts: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    enqueued += 1;
+  }
+
+  if (enqueued > 0) {
+    await saveStore(store);
+  }
+
+  return {
+    scanned: candidates.length,
+    enqueued,
+  };
+}
+
+export async function markPostOutboxProcessing(outboxId: string) {
+  const store = await loadStore();
+  const item = store.postOutbox.find((entry) => entry.id === outboxId);
+  if (!item) return null;
+  item.status = "processing";
+  item.updatedAt = new Date().toISOString();
+  await saveStore(store);
+  return item;
+}
+
+export async function markPostOutboxFailed(outboxId: string, error: string) {
+  const store = await loadStore();
+  const item = store.postOutbox.find((entry) => entry.id === outboxId);
+  if (!item) return null;
+  item.status = "failed";
+  item.attempts += 1;
+  item.lastError = error.slice(0, 500);
+  item.updatedAt = new Date().toISOString();
+  await saveStore(store);
+  return item;
+}
+
+export async function markPostOutboxPublished(outboxId: string, chainPostId: string) {
+  const store = await loadStore();
+  const item = store.postOutbox.find((entry) => entry.id === outboxId);
+  if (!item) return null;
+
+  item.status = "published";
+  item.attempts += 1;
+  item.chainPostId = chainPostId;
+  item.publishedAt = new Date().toISOString();
+  item.updatedAt = item.publishedAt;
+
+  const post = store.posts.find((entry) => entry.id === item.postId);
+  if (post) {
+    post.publishStatus = "published";
+    post.chainPostId = chainPostId;
+    post.indexedAt = new Date().toISOString();
+  }
+
+  await saveStore(store);
+  return item;
 }
 
 export async function toggleLike(postId: string, actorAddress: string) {
@@ -496,6 +645,7 @@ export async function exportUserOffchainData(address: string) {
     followsAsFollower: store.follows.filter((follow) => follow.follower === normalized),
     followsAsFollowing: store.follows.filter((follow) => follow.following === normalized),
     reposts: store.reposts.filter((repost) => repost.address === normalized),
+    postOutbox: store.postOutbox.filter((item) => item.address === normalized),
     likedPostIds: store.posts
       .filter((post) => (post.likes ?? []).includes(normalized))
       .map((post) => post.id),
@@ -511,6 +661,7 @@ export async function deleteUserOffchainData(address: string) {
     replies: store.replies.length,
     follows: store.follows.length,
     reposts: store.reposts.length,
+    postOutbox: store.postOutbox.length,
   };
 
   store.posts = store.posts.filter((post) => post.author.address !== normalized);
@@ -519,6 +670,7 @@ export async function deleteUserOffchainData(address: string) {
     (follow) => follow.follower !== normalized && follow.following !== normalized
   );
   store.reposts = store.reposts.filter((repost) => repost.address !== normalized);
+  store.postOutbox = store.postOutbox.filter((item) => item.address !== normalized);
 
   for (const post of store.posts) {
     post.likes = (post.likes ?? []).filter((likeAddress) => likeAddress !== normalized);
@@ -532,5 +684,6 @@ export async function deleteUserOffchainData(address: string) {
     deletedReplies: before.replies - store.replies.length,
     deletedFollows: before.follows - store.follows.length,
     deletedReposts: before.reposts - store.reposts.length,
+    deletedPostOutbox: before.postOutbox - store.postOutbox.length,
   };
 }

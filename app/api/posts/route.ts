@@ -73,6 +73,10 @@ const LOCAL_READ_TIMEOUT_MS = Number.parseInt(
   process.env.CHAINSOCIAL_LOCAL_READ_TIMEOUT_MS ?? "1200",
   10
 );
+const CHAIN_ONLY_WRITES = (() => {
+  const raw = (process.env.CHAINSOCIAL_CHAIN_ONLY_WRITES ?? "true").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+})();
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | null = null;
@@ -294,16 +298,6 @@ export async function GET(req: Request) {
           "Lens feed fetch failed, falling back to local store:",
           lensMessage
         );
-        if (!isPrimaryStateStoreHealthy()) {
-          return NextResponse.json({
-            posts: [],
-            nextCursor: null,
-            source: "local",
-            resolvedAuthor: author ?? null,
-            lensFallbackError: lensMessage,
-            localFallbackError: "primary state store unhealthy",
-          });
-        }
         try {
           const localData = await withTimeout(
             listPosts({
@@ -338,15 +332,6 @@ export async function GET(req: Request) {
     }
 
     let localData;
-    if (!isPrimaryStateStoreHealthy()) {
-      return NextResponse.json({
-        posts: [],
-        nextCursor: null,
-        source: "local",
-        resolvedAuthor: author ?? null,
-        localFallbackError: "primary state store unhealthy",
-      });
-    }
     try {
       localData = await withTimeout(
         listPosts({
@@ -427,6 +412,16 @@ export async function POST(req: Request) {
       process.env.LENS_POSTS_SOURCE === "lens" ||
       process.env.NEXT_PUBLIC_LENS_POSTS_SOURCE === "lens";
 
+    if (CHAIN_ONLY_WRITES && !useLensData) {
+      return NextResponse.json(
+        {
+          error:
+            "Chain-only mode is enabled. Set LENS_POSTS_SOURCE=lens and connect Lens before posting.",
+        },
+        { status: 503 }
+      );
+    }
+
     if (useLensData) {
       const accessToken = await getLensAccessTokenFromCookie();
       
@@ -467,6 +462,8 @@ export async function POST(req: Request) {
           content: parsedContent.content,
           username,
           media,
+          chainPostId: post.id,
+          publishStatus: "published",
         }).catch((mirrorError) => {
           console.warn("[Post API] Local mirror write failed:", mirrorError);
         });
@@ -497,6 +494,7 @@ export async function POST(req: Request) {
       content: parsedContent.content,
       username,
       media,
+      publishStatus: "local_only",
     });
 
     return NextResponse.json({ success: true, post, source: "local" });

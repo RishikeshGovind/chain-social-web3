@@ -5,6 +5,15 @@ import { usePrivy } from "@privy-io/react-auth";
 import AppShell from "@/components/AppShell";
 
 type AvatarMode = "dicebear" | "custom";
+type MigrationOutboxItem = {
+  id: string;
+  postId: string;
+  status: "pending" | "processing" | "published" | "failed";
+  attempts: number;
+  updatedAt: string;
+  lastError?: string;
+  chainPostId?: string;
+};
 
 function buildDicebearUrl(seed: string) {
   return `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(seed)}`;
@@ -37,10 +46,57 @@ export default function EditProfilePage() {
   const [uploadingCover, setUploadingCover] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [migrationLoading, setMigrationLoading] = useState(false);
+  const [migrationBusy, setMigrationBusy] = useState(false);
+  const [migrationError, setMigrationError] = useState<string | null>(null);
+  const [migrationSuccess, setMigrationSuccess] = useState<string | null>(null);
+  const [legacyCount, setLegacyCount] = useState(0);
+  const [outbox, setOutbox] = useState<MigrationOutboxItem[]>([]);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const { user } = usePrivy();
   const router = useRouter();
+
+  async function refreshMigrationStatus() {
+    setMigrationLoading(true);
+    setMigrationError(null);
+    try {
+      const res = await fetch("/api/posts/migration", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to load migration status");
+      setLegacyCount(Array.isArray(data?.legacyPosts) ? data.legacyPosts.length : 0);
+      setOutbox(Array.isArray(data?.outbox) ? (data.outbox as MigrationOutboxItem[]) : []);
+    } catch (err) {
+      setMigrationError(err instanceof Error ? err.message : "Failed to load migration status");
+    } finally {
+      setMigrationLoading(false);
+    }
+  }
+
+  async function runMigrationAction(action: "enqueue" | "process") {
+    setMigrationBusy(true);
+    setMigrationError(null);
+    setMigrationSuccess(null);
+    try {
+      const res = await fetch("/api/posts/migration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, limit: action === "enqueue" ? 100 : 25 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Migration action failed");
+      setMigrationSuccess(
+        action === "enqueue"
+          ? `Enqueued ${data?.enqueued ?? 0} legacy posts.`
+          : `Processed ${data?.attempted ?? 0} items: ${data?.published ?? 0} published, ${data?.failed ?? 0} failed.`
+      );
+      await refreshMigrationStatus();
+    } catch (err) {
+      setMigrationError(err instanceof Error ? err.message : "Migration action failed");
+    } finally {
+      setMigrationBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!user?.wallet?.address) return;
@@ -85,6 +141,11 @@ export default function EditProfilePage() {
           }
         }
       });
+  }, [user?.wallet?.address]);
+
+  useEffect(() => {
+    if (!user?.wallet?.address) return;
+    void refreshMigrationStatus();
   }, [user?.wallet?.address]);
 
   async function uploadImage(file: File): Promise<string> {
@@ -352,6 +413,56 @@ export default function EditProfilePage() {
           {error && <div className="text-red-400 mt-2 text-center">{error}</div>}
           {saved && <div className="text-green-400 mt-2 text-center">Saved!</div>}
         </form>
+
+        <div className="mt-8 border-t border-gray-800 pt-6">
+          <h3 className="text-lg font-semibold mb-2">Legacy Post Migration</h3>
+          <p className="text-sm text-gray-400 mb-3">
+            Republish old local-only (UUID) posts to Lens so they are on-chain.
+          </p>
+          <div className="text-sm text-gray-300 mb-3">
+            Legacy posts: <span className="font-semibold">{legacyCount}</span> | Outbox:{" "}
+            <span className="font-semibold">{outbox.length}</span>
+          </div>
+          <div className="flex gap-2 mb-3">
+            <button
+              type="button"
+              onClick={() => void refreshMigrationStatus()}
+              disabled={migrationLoading || migrationBusy}
+              className="rounded border border-gray-600 px-3 py-2 text-sm hover:bg-gray-800 disabled:opacity-50"
+            >
+              {migrationLoading ? "Refreshing..." : "Refresh Status"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void runMigrationAction("enqueue")}
+              disabled={migrationBusy || migrationLoading}
+              className="rounded border border-blue-700 px-3 py-2 text-sm text-blue-300 hover:bg-blue-950/40 disabled:opacity-50"
+            >
+              Enqueue Legacy Posts
+            </button>
+            <button
+              type="button"
+              onClick={() => void runMigrationAction("process")}
+              disabled={migrationBusy || migrationLoading}
+              className="rounded border border-green-700 px-3 py-2 text-sm text-green-300 hover:bg-green-950/40 disabled:opacity-50"
+            >
+              {migrationBusy ? "Processing..." : "Process Outbox"}
+            </button>
+          </div>
+          {migrationError && <div className="text-red-400 text-sm mb-2">{migrationError}</div>}
+          {migrationSuccess && <div className="text-green-400 text-sm mb-2">{migrationSuccess}</div>}
+          {outbox.length > 0 && (
+            <div className="max-h-40 overflow-auto rounded border border-gray-800 bg-black p-2 text-xs">
+              {outbox.slice(0, 20).map((item) => (
+                <div key={item.id} className="mb-1 text-gray-300 break-all">
+                  {item.status.toUpperCase()} · {item.postId}
+                  {item.chainPostId ? ` -> ${item.chainPostId}` : ""}
+                  {item.lastError ? ` · ${item.lastError}` : ""}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         </div>
       </div>
     </AppShell>

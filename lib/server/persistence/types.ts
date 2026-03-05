@@ -1,10 +1,11 @@
-import type { Follow, Post, Reply, Repost } from "@/lib/posts/types";
+import type { Follow, Post, PostOutboxItem, Reply, Repost } from "@/lib/posts/types";
 
 export type ChainSocialState = {
   posts: Post[];
   replies: Reply[];
   follows: Follow[];
   reposts: Repost[];
+  postOutbox: PostOutboxItem[];
 };
 
 export interface StateStore {

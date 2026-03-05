@@ -12,6 +12,9 @@ export type Author = {
 export type Post = {
   id: string;
   timestamp: string;
+  chainPostId?: string;
+  publishStatus?: "published" | "pending" | "failed" | "local_only";
+  indexedAt?: string;
   metadata: {
     content: string;
     media?: string[]; // Array of media URLs (IPFS or local)
@@ -20,6 +23,23 @@ export type Post = {
   likes: string[];
   reposts?: string[];
   replyCount?: number;
+};
+
+export type PostOutboxStatus = "pending" | "processing" | "published" | "failed";
+
+export type PostOutboxItem = {
+  id: string;
+  postId: string;
+  address: string;
+  content: string;
+  media?: string[];
+  status: PostOutboxStatus;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
+  chainPostId?: string;
+  publishedAt?: string;
 };
 
 export type Reply = {
