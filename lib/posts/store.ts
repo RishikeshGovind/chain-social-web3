@@ -12,7 +12,7 @@ import type {
   Reply,
   Repost,
 } from "@/lib/posts/types";
-import { getStateStore } from "@/lib/server/persistence";
+import { mergeState, readState } from "@/lib/server/persistence";
 import { randomUUID } from "node:crypto";
 
 type StoreData = {
@@ -104,13 +104,13 @@ function withRepostCounts(posts: Post[], reposts: Repost[]) {
 }
 
 async function persist(store: StoreData) {
-  await getStateStore().write(store);
+  await mergeState(store);
 }
 
 async function loadStore(): Promise<StoreData> {
   if (cachedStore) return cachedStore;
 
-  const parsed = (await getStateStore().read()) as Partial<StoreData> | null;
+  const parsed = (await readState()) as Partial<StoreData> | null;
   if (!parsed) {
     cachedStore = { posts: DEFAULT_POSTS, replies: [], follows: [], reposts: [], postOutbox: [] };
     await persist(cachedStore);
@@ -205,6 +205,18 @@ export async function listPosts({ limit, cursor, author }: ListPostsInput) {
     }) : null;
 
   return { posts: items, nextCursor };
+}
+
+export async function getPostById(postId: string) {
+  const store = await loadStore();
+  const post = store.posts.find((item) => item.id === postId);
+  if (!post) return null;
+
+  return {
+    ...post,
+    replyCount: store.replies.filter((reply) => reply.postId === post.id).length,
+    reposts: withRepostCounts([post], store.reposts)[0]?.reposts ?? [],
+  };
 }
 
 export async function createPost(params: {

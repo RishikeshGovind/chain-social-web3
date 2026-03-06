@@ -1,5 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { mergeState, readState } from "@/lib/server/persistence";
+import type { PersistedComplianceState } from "@/lib/server/persistence/types";
 
 export type DsarType = "access" | "delete" | "rectify" | "restrict" | "object" | "portability";
 export type DsarStatus = "open" | "in_review" | "completed" | "rejected";
@@ -41,13 +43,19 @@ function defaultStore(): ComplianceStore {
   };
 }
 
-async function persist(store: ComplianceStore) {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(STORE_FILE, JSON.stringify(store, null, 2), "utf8");
-}
-
 async function loadStore(): Promise<ComplianceStore> {
   if (cache) return cache;
+
+  const state = await readState();
+  const persisted = state.compliance;
+  if (persisted) {
+    cache = {
+      dsarRequests: Array.isArray(persisted.dsarRequests) ? (persisted.dsarRequests as DsarRequest[]) : [],
+      auditEvents: Array.isArray(persisted.auditEvents) ? (persisted.auditEvents as ComplianceAuditEvent[]) : [],
+    };
+    return cache;
+  }
+
   try {
     const raw = await readFile(STORE_FILE, "utf8");
     const parsed = JSON.parse(raw) as Partial<ComplianceStore>;
@@ -55,15 +63,22 @@ async function loadStore(): Promise<ComplianceStore> {
       dsarRequests: Array.isArray(parsed.dsarRequests) ? parsed.dsarRequests : [],
       auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
     };
+    await saveStore(cache);
   } catch {
     cache = defaultStore();
-    await persist(cache);
   }
   return cache;
 }
 
 async function saveStore(store: ComplianceStore) {
-  writeChain = writeChain.then(() => persist(store));
+  writeChain = writeChain.then(() =>
+    mergeState({
+      compliance: {
+        dsarRequests: store.dsarRequests,
+        auditEvents: store.auditEvents,
+      } satisfies PersistedComplianceState,
+    })
+  );
   await writeChain;
 }
 

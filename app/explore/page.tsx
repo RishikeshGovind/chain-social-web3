@@ -97,6 +97,13 @@ function getMediaKind(url: string): "video" | "gif" | "image" {
   return "image";
 }
 
+function didAuthExpire(status: number, error: unknown) {
+  return (
+    status === 401 ||
+    (typeof error === "string" && error.includes("Unauthenticated"))
+  );
+}
+
 export default function ExplorePage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [query, setQuery] = useState("");
@@ -191,6 +198,7 @@ export default function ExplorePage() {
   async function handleLike(postId: string) {
     if (!viewerAddress) return;
     setError(null);
+    const previousPosts = posts;
     const currentlyLiked =
       posts.find((post) => post.id === postId)?.likes?.includes(viewerAddress) ?? false;
 
@@ -219,11 +227,7 @@ export default function ExplorePage() {
         });
         const data = await res.json();
 
-        if (
-          (res.status === 401 ||
-            (typeof data.error === "string" && data.error.includes("Unauthenticated"))) &&
-          retryCount === 0
-        ) {
+        if (didAuthExpire(res.status, data.error) && retryCount === 0) {
           const refreshRes = await fetch("/api/lens/refresh", {
             method: "POST",
             credentials: "include",
@@ -241,6 +245,7 @@ export default function ExplorePage() {
         setPosts((prev) => prev.map((post) => (post.id === postId ? updated : post)));
       }
     } catch (e) {
+      setPosts(previousPosts);
       setError(e instanceof Error ? e.message : "Failed to update like");
     }
   }
@@ -248,6 +253,7 @@ export default function ExplorePage() {
   async function handleRepost(postId: string) {
     if (!viewerAddress) return;
     setError(null);
+    const previousPosts = posts;
     const currentlyReposted =
       posts.find((post) => post.id === postId)?.reposts?.includes(viewerAddress) ?? false;
 
@@ -276,11 +282,7 @@ export default function ExplorePage() {
         });
         const data = await res.json();
 
-        if (
-          (res.status === 401 ||
-            (typeof data.error === "string" && data.error.includes("Unauthenticated"))) &&
-          retryCount === 0
-        ) {
+        if (didAuthExpire(res.status, data.error) && retryCount === 0) {
           const refreshRes = await fetch("/api/lens/refresh", {
             method: "POST",
             credentials: "include",
@@ -298,6 +300,7 @@ export default function ExplorePage() {
         setPosts((prev) => prev.map((post) => (post.id === postId ? updated : post)));
       }
     } catch (e) {
+      setPosts(previousPosts);
       setError(e instanceof Error ? e.message : "Failed to update repost");
     }
   }
@@ -337,20 +340,39 @@ export default function ExplorePage() {
     setReplyLoadingByPost((prev) => ({ ...prev, [postId]: true }));
     setError(null);
     try {
-      const res = await fetch(`/api/posts/${postId}/replies`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to post reply");
+      const submitWithRetry = async (
+        retryCount = 0
+      ): Promise<{ ok: boolean; data: Record<string, unknown> }> => {
+        const res = await fetch(`/api/posts/${postId}/replies`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+          credentials: "include",
+        });
+        const data = await res.json();
+
+        if (didAuthExpire(res.status, data.error) && retryCount === 0) {
+          const refreshRes = await fetch("/api/lens/refresh", {
+            method: "POST",
+            credentials: "include",
+          });
+          if (refreshRes.ok) return submitWithRetry(1);
+          throw new Error("Session expired. Please reconnect Lens.");
+        }
+
+        return { ok: res.ok, data };
+      };
+
+      const { ok, data } = await submitWithRetry();
+      if (!ok) throw new Error((data.error as string) || "Failed to post reply");
       setReplyDraftByPost((prev) => ({ ...prev, [postId]: "" }));
       await fetchReplies(postId);
-      if (typeof data.replyCount === "number") {
+      const nextReplyCount =
+        typeof data.replyCount === "number" ? data.replyCount : null;
+      if (nextReplyCount !== null) {
         setPosts((prev) =>
           prev.map((post) =>
-            post.id === postId ? { ...post, replyCount: data.replyCount } : post
+            post.id === postId ? { ...post, replyCount: nextReplyCount } : post
           )
         );
       }

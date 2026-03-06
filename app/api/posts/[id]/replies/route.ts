@@ -10,6 +10,7 @@ import { createReply, listReplies, upsertReply } from "@/lib/posts/store";
 import { createLensReply } from "@/lib/lens/writes";
 import { lensRequest } from "@/lib/lens";
 import { fetchLensReplies } from "@/lib/lens/feed";
+import { notifyPostReplied } from "@/lib/server/notifications/helpers";
 import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
@@ -494,6 +495,12 @@ export async function POST(
           replyCount: mirror.replyCount,
           source: "lens",
         });
+        await notifyPostReplied({
+          postId,
+          replyId: mirror.reply.id,
+          actorAddress,
+          accessToken,
+        });
         applyRefreshedCookies(successResponse, refreshedTokens);
         return successResponse;
       } catch (lensError) {
@@ -557,6 +564,12 @@ export async function POST(
                 replyCount: mirror.replyCount,
                 source: "lens",
               });
+              await notifyPostReplied({
+                postId,
+                replyId: mirror.reply.id,
+                actorAddress,
+                accessToken: retryTokens.accessToken,
+              });
               applyRefreshedCookies(successResponse, retryTokens);
               return successResponse;
             } catch (retryError) {
@@ -584,6 +597,11 @@ export async function POST(
       address: actorAddress,
       content: parsedContent.content,
       username,
+    });
+    await notifyPostReplied({
+      postId,
+      replyId: result.reply.id,
+      actorAddress,
     });
 
     return NextResponse.json({

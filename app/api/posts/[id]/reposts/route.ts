@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isValidAddress } from "@/lib/posts/content";
 import { toggleRepost } from "@/lib/posts/store";
+import { notifyPostReposted } from "@/lib/server/notifications/helpers";
 import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
 
 export async function PATCH(
@@ -36,6 +37,9 @@ export async function PATCH(
     }
 
     const result = await toggleRepost(postId, actorAddress);
+    if (result.reposted) {
+      await notifyPostReposted({ postId, actorAddress });
+    }
     return NextResponse.json({ success: true, ...result, source: "local" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to update repost";

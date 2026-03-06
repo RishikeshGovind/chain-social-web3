@@ -1213,6 +1213,129 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
   throw new Error(errors.join(" | "));
 }
 
+export async function fetchLensPostById(input: {
+  postId: string;
+  accessToken?: string;
+}): Promise<Post | null> {
+  const postId = String(input.postId ?? "").trim();
+  if (!postId) return null;
+
+  const queryVariants: Array<{ query: string; variables: Record<string, unknown> }> = [
+    {
+      query: `
+        query Post($request: PostRequest!) {
+          post(request: $request) {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              metadata {
+                __typename
+                ... on TextOnlyMetadata { content }
+                ... on ArticleMetadata {
+                  content
+                  attachments {
+                    ... on MediaImage { item }
+                    ... on MediaVideo { item }
+                  }
+                }
+                ... on ImageMetadata {
+                  content
+                  image { item }
+                  attachments {
+                    ... on MediaImage { item }
+                  }
+                }
+                ... on VideoMetadata {
+                  content
+                  video { item }
+                  attachments {
+                    ... on MediaVideo { item }
+                  }
+                }
+                ... on AudioMetadata {
+                  content
+                  audio { item }
+                }
+                ... on EmbedMetadata { content }
+                ... on LinkMetadata { content }
+              }
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+          }
+        }
+      `,
+      variables: { request: { for: postId } },
+    },
+    {
+      query: `
+        query Post($request: PostRequest!) {
+          post(request: $request) {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              metadata {
+                __typename
+                ... on TextOnlyMetadata { content }
+                ... on ArticleMetadata { content }
+                ... on ImageMetadata { content image { item } }
+                ... on VideoMetadata { content video { item } }
+                ... on AudioMetadata { content audio { item } }
+                ... on EmbedMetadata { content }
+                ... on LinkMetadata { content }
+              }
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+          }
+        }
+      `,
+      variables: { request: { post: postId } },
+    },
+    {
+      query: `
+        query Post($request: PostRequest!) {
+          post(request: $request) {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              content
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+          }
+        }
+      `,
+      variables: { request: { id: postId } },
+    },
+  ];
+
+  for (const variant of queryVariants) {
+    try {
+      const data = await lensRequest(variant.query, variant.variables, input.accessToken);
+      const root = asObject(data);
+      const mapped = await mapNodeToPost(root?.post);
+      if (mapped?.post) return mapped.post;
+    } catch {
+      // Try next query shape.
+    }
+  }
+
+  return null;
+}
+
 function buildPostReferencesQuery(referenceType: string, includePaging: boolean): string {
   return `
   query PostReferences($postId: PostId!${includePaging ? ", $cursor: Cursor, $pageSize: PageSize" : ""}) {

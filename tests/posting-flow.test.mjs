@@ -109,13 +109,13 @@ test("media validator rejects bad urls and too many images", () => {
 
 test("buildContentUri produces json data URI including content and media", () => {
   const uri = lensWrites.buildContentUri("hello world", ["https://foo.jpg"]);
-  assert.ok(uri.startsWith("data:application/json,"));
-  const payload = decodeURIComponent(uri.split(",")[1]);
+  assert.ok(uri.startsWith("data:application/json;base64,"));
+  const payload = Buffer.from(uri.split(",")[1], "base64").toString("utf8");
   const obj = JSON.parse(payload);
-  assert.equal(obj.lens.content, "hello world");
-  assert.equal(obj.lens.mainContentFocus, "IMAGE");
-  assert.ok(Array.isArray(obj.lens.attachments));
-  assert.equal(obj.lens.attachments[0].item, "https://foo.jpg");
+  assert.equal(obj.content, "hello world");
+  assert.equal(obj.mainContentFocus, "IMAGE");
+  assert.ok(Array.isArray(obj.attachments));
+  assert.equal(obj.attachments[0].item, "https://foo.jpg");
 });
 
 test("buildPostRequest includes contentUri only", () => {

@@ -1,9 +1,10 @@
 // app/api/lens/me/route.ts
 
 import { NextResponse } from "next/server";
-import axios from "axios";
+import { lensRequest } from "@/lib/lens";
 
-const LENS_API_URL = "https://api.lens.xyz/graphql";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET() {
   const query = `
@@ -25,11 +26,11 @@ export async function GET() {
     }
   `;
 
-  const response = await axios.post(
-    LENS_API_URL,
-    { query },
-    { headers: { "Content-Type": "application/json" } }
-  );
-
-  return NextResponse.json(response.data);
+  try {
+    const data = await lensRequest(query);
+    return NextResponse.json(data);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Lens request failed";
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
 }

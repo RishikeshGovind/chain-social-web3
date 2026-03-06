@@ -2,9 +2,10 @@ import path from "node:path";
 import { FileStateStore } from "./file-state-store";
 import { FailoverStateStore } from "./failover-state-store";
 import { PostgresStateStore } from "./postgres-state-store";
-import type { StateStore } from "./types";
+import { createEmptyState, type ChainSocialState, type StateStore } from "./types";
 
 let singleton: StateStore | null = null;
+let mergeChain = Promise.resolve();
 
 function parsePositiveInt(value: string | undefined, fallback: number) {
   if (!value) return fallback;
@@ -52,6 +53,22 @@ export function getStateStore(): StateStore {
 
   singleton = fileStore;
   return singleton;
+}
+
+export async function readState(): Promise<ChainSocialState> {
+  return (await getStateStore().read()) ?? createEmptyState();
+}
+
+export async function mergeState(partial: Partial<ChainSocialState>): Promise<void> {
+  const operation = mergeChain.then(async () => {
+    const current = await readState();
+    await getStateStore().write({
+      ...current,
+      ...partial,
+    });
+  });
+  mergeChain = operation.catch(() => undefined);
+  await operation;
 }
 
 export function isPrimaryStateStoreHealthy(): boolean {

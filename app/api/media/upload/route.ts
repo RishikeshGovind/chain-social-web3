@@ -1,36 +1,16 @@
 import { NextResponse } from "next/server";
 import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
 import { isValidAddress } from "@/lib/posts/content";
+import { checkUploadRateLimit } from "@/lib/server/rate-limit";
 import { getMediaStorage } from "@/lib/server/storage/media-storage";
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5MB
-const UPLOADS_PER_MINUTE = 20;
 const ALLOWED_MIME = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
   "image/gif",
 ]);
-
-const uploadRateState = new Map<string, { windowStart: number; count: number }>();
-
-function checkUploadRateLimit(address: string) {
-  const now = Date.now();
-  const state = uploadRateState.get(address) ?? { windowStart: now, count: 0 };
-  if (now - state.windowStart >= 60_000) {
-    state.windowStart = now;
-    state.count = 0;
-  }
-  if (state.count >= UPLOADS_PER_MINUTE) {
-    return {
-      ok: false as const,
-      retryAfterMs: 60_000 - (now - state.windowStart),
-    };
-  }
-  state.count += 1;
-  uploadRateState.set(address, state);
-  return { ok: true as const };
-}
 
 function hasValidImageSignature(buffer: Buffer, mimeType: string) {
   if (mimeType === "image/jpeg") {
@@ -86,11 +66,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const uploadRateLimit = checkUploadRateLimit(actorAddress);
+    const uploadRateLimit = await checkUploadRateLimit(actorAddress);
     if (!uploadRateLimit.ok) {
       const retryAfterSeconds = Math.max(1, Math.ceil(uploadRateLimit.retryAfterMs / 1000));
       return NextResponse.json(
-        { error: "Upload rate limit reached. Please try again shortly." },
+        { error: uploadRateLimit.error },
         { status: 429, headers: { "Retry-After": `${retryAfterSeconds}` } }
       );
     }

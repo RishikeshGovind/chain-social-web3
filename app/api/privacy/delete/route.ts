@@ -3,6 +3,8 @@ import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
 import { isValidAddress, normalizeAddress } from "@/lib/posts/content";
 import { deleteUserOffchainData } from "@/lib/posts/store";
 import { appendComplianceAuditEvent } from "@/lib/server/compliance/store";
+import { deleteMessages } from "@/lib/server/messages/store";
+import { deleteNotifications } from "@/lib/server/notifications/store";
 import { deleteProfiles } from "@/lib/profiles/store";
 
 export async function DELETE() {
@@ -12,9 +14,11 @@ export async function DELETE() {
   }
 
   const actor = normalizeAddress(actorAddress);
-  const [postDeletionSummary, deletedProfiles] = await Promise.all([
+  const [postDeletionSummary, deletedProfiles, deletedNotifications, deletedMessages] = await Promise.all([
     deleteUserOffchainData(actor),
     deleteProfiles([actor]),
+    deleteNotifications(actor),
+    deleteMessages(actor),
   ]);
   await appendComplianceAuditEvent({
     type: "privacy.delete.executed",
@@ -22,6 +26,8 @@ export async function DELETE() {
     metadata: {
       ...postDeletionSummary,
       deletedProfiles,
+      deletedNotifications: deletedNotifications.removed,
+      deletedMessages: deletedMessages.removed,
     },
   });
 
@@ -32,6 +38,8 @@ export async function DELETE() {
     offchainDeletionSummary: {
       ...postDeletionSummary,
       deletedProfiles,
+      deletedNotifications: deletedNotifications.removed,
+      deletedMessages: deletedMessages.removed,
     },
     note:
       "On-chain and decentralized records may remain accessible due to network immutability; this request deletes app-managed off-chain data only.",

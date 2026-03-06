@@ -1,6 +1,36 @@
 {
   "posts": [
     {
+      "id": "0xfab53083763e1bf84f14d111fc79d95101da830d184edccc40741d7a8d187e5f",
+      "timestamp": "2026-03-06T17:59:51.754Z",
+      "chainPostId": "0xfab53083763e1bf84f14d111fc79d95101da830d184edccc40741d7a8d187e5f",
+      "publishStatus": "published",
+      "indexedAt": "2026-03-06T17:59:51.755Z",
+      "metadata": {
+        "content": "The NYSE-OKX deal puts a legacy giant right at the heart of the digital asset world. The bridge between Wall Street and Web3 just got stronger."
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x6ce7f93401f72851247cc199c9a480776a9a45f5b73a3f825143375d95ff48d5",
+      "timestamp": "2026-03-06T17:39:39.232Z",
+      "chainPostId": "0x6ce7f93401f72851247cc199c9a480776a9a45f5b73a3f825143375d95ff48d5",
+      "publishStatus": "published",
+      "indexedAt": "2026-03-06T17:39:39.233Z",
+      "metadata": {
+        "content": "Intercontinental Exchange (ICE), the owner of the NYSE, acquired a stake in the crypto exchange OKX at a $25 billion valuation"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
       "id": "0xe9c48df1258bb5b9b1286480718865b0cfa6f6a2d4387a261cb96ae3ade481b6",
       "timestamp": "2026-03-05T18:20:05.558Z",
       "chainPostId": "0xe9c48df1258bb5b9b1286480718865b0cfa6f6a2d4387a261cb96ae3ade481b6",

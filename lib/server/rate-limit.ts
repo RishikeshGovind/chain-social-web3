@@ -58,29 +58,35 @@ async function checkDistributedRateLimit(address: string, policy: RateLimitPolic
   const nowMinuteBucket = Math.floor(Date.now() / 60_000);
   const cooldownKey = `${policy.keyPrefix}:cooldown:${normalized}`;
   const minuteKey = `${policy.keyPrefix}:window:${normalized}:${nowMinuteBucket}`;
+  const commands =
+    policy.cooldownMs > 0
+      ? [
+          ["SET", cooldownKey, "1", "PX", String(policy.cooldownMs), "NX"],
+          ["PTTL", cooldownKey],
+          ["INCR", minuteKey],
+          ["EXPIRE", minuteKey, "61", "NX"],
+          ["PTTL", minuteKey],
+        ]
+      : [
+          ["INCR", minuteKey],
+          ["EXPIRE", minuteKey, "61", "NX"],
+          ["PTTL", minuteKey],
+        ];
 
-  const results = await callUpstashPipeline([
-    ["SET", cooldownKey, "1", "PX", String(policy.cooldownMs), "NX"],
-    ["PTTL", cooldownKey],
-    ["INCR", minuteKey],
-    ["EXPIRE", minuteKey, "61", "NX"],
-    ["PTTL", minuteKey],
-  ]);
+  const results = await callUpstashPipeline(commands);
 
   if (!results) return null;
 
-  const cooldownSet = results[0]?.result;
-  const cooldownTtl = asNumber(results[1]?.result);
-  const minuteCount = asNumber(results[2]?.result);
-  const minuteTtl = asNumber(results[4]?.result);
-
-  if (cooldownSet !== "OK") {
+  if (policy.cooldownMs > 0 && results[0]?.result !== "OK") {
     return {
       ok: false,
       error: policy.cooldownError,
-      retryAfterMs: Math.max(1, cooldownTtl),
+      retryAfterMs: Math.max(1, asNumber(results[1]?.result)),
     };
   }
+
+  const minuteCount = asNumber(results[policy.cooldownMs > 0 ? 2 : 0]?.result);
+  const minuteTtl = asNumber(results[policy.cooldownMs > 0 ? 4 : 2]?.result);
 
   if (minuteCount > policy.perMinute) {
     return {
@@ -153,5 +159,15 @@ export async function checkReplyRateLimit(address: string): Promise<RateLimitRes
     perMinute: 40,
     cooldownError: "Replying too quickly. Please wait a moment.",
     windowError: "Reply rate limit reached. Try again in a minute.",
+  });
+}
+
+export async function checkUploadRateLimit(address: string): Promise<RateLimitResult> {
+  return checkRateLimit(address, {
+    keyPrefix: "upload",
+    cooldownMs: 0,
+    perMinute: 20,
+    cooldownError: "Uploading too quickly. Please wait a moment.",
+    windowError: "Upload rate limit reached. Please try again shortly.",
   });
 }
