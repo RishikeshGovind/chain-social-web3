@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
+import PostMedia from "@/components/PostMedia";
+import { useUserSettings } from "@/lib/client/settings";
 
 type ProfilePost = {
   id: string;
@@ -58,15 +60,6 @@ function renderContentWithWrappedLinks(raw?: string) {
     }
     return <span key={`txt-${index}`}>{part}</span>;
   });
-}
-
-function getMediaKind(url: string): "video" | "gif" | "image" {
-  if (/[?&]__media=video(\b|&|$)/i.test(url)) return "video";
-  if (/[?&]__media=gif(\b|&|$)/i.test(url)) return "gif";
-  if (/\.(mp4|webm|ogg|mov|m4v)(\?|$)/i.test(url)) return "video";
-  if (/\.(gif)(\?|$)/i.test(url)) return "gif";
-  if (/\/(video|videos)\//i.test(url)) return "video";
-  return "image";
 }
 
 function postSignature(post: ProfilePost) {
@@ -141,6 +134,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
   const [followLoading, setFollowLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { authenticated, user } = usePrivy();
+  const { settings } = useUserSettings();
 
   const viewerAddress = useMemo(
     () => user?.wallet?.address?.toLowerCase() ?? "",
@@ -393,26 +387,33 @@ export default function UserProfilePage({ params }: { params: { address: string 
 
   return (
     <AppShell active="Profile">
-      <div className="w-full max-w-2xl bg-black">
-        <div className="h-40 w-full relative">
+      <div className="w-full max-w-3xl text-white">
+        <section className="animate-fade-up overflow-hidden rounded-[2.25rem] border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
+        <div className="h-44 w-full relative">
           {coverImage ? (
             <img src={coverImage} alt="cover" className="object-cover w-full h-full" />
           ) : (
-            <div className="w-full h-full bg-gradient-to-r from-blue-900 to-purple-900" />
+            <div className="w-full h-full bg-gradient-to-r from-cyan-900 via-slate-900 to-lime-900" />
           )}
+          <div className="absolute inset-0 bg-black/20" />
           <div className="absolute left-1/2 transform -translate-x-1/2 top-24 z-10">
             <img
               src={avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${params.address}`}
               alt="avatar"
-              className="w-32 h-32 rounded-full border-4 border-black shadow-xl bg-white"
+              className="w-32 h-32 rounded-full border-4 border-black shadow-xl bg-white object-cover"
             />
           </div>
         </div>
 
-        <div className="pt-20 pb-6 px-6 flex flex-col items-center border-b border-gray-800 bg-black">
-          <div className="text-2xl font-bold text-white">{headerTitle}</div>
+        <div className="pt-20 pb-8 px-6 flex flex-col items-center border-t border-white/5 bg-transparent">
+          <div className="text-center">
+            <p className="mb-3 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-[11px] uppercase tracking-[0.28em] text-cyan-200">
+              Profile
+            </p>
+            <div className="text-3xl font-black uppercase tracking-[-0.05em] text-white">{headerTitle}</div>
+          </div>
           {showHeaderAddressRow && (
-            <div className="text-blue-400 text-sm mb-2">
+            <div className="text-blue-300 text-sm mb-2 mt-2 break-all">
               {params.address}
             </div>
           )}
@@ -421,13 +422,13 @@ export default function UserProfilePage({ params }: { params: { address: string 
             <div className="mb-3 flex items-center gap-2">
               <Link
                 href="/profile/edit"
-                className="rounded-lg border border-gray-700 px-4 py-1 text-sm hover:bg-gray-900"
+                className="rounded-full border border-white/10 px-4 py-2 text-sm transition hover:bg-white/[0.06]"
               >
                 Edit Profile
               </Link>
               <Link
                 href="/profile/edit"
-                className="rounded-lg border border-blue-700 px-4 py-1 text-sm text-blue-300 hover:bg-blue-950/40"
+                className="rounded-full border border-cyan-400/20 px-4 py-2 text-sm text-cyan-200 transition hover:bg-cyan-400/10"
               >
                 Migrate Legacy Posts
               </Link>
@@ -438,16 +439,16 @@ export default function UserProfilePage({ params }: { params: { address: string 
             <button
               onClick={() => void handleToggleFollow()}
               disabled={followLoading}
-              className="mb-3 rounded-lg border border-gray-700 px-4 py-1 text-sm hover:bg-gray-900 disabled:opacity-50"
+              className="mb-3 rounded-full border border-white/10 px-4 py-2 text-sm transition hover:bg-white/[0.06] disabled:opacity-50"
             >
               {followStats.isFollowing ? "Unfollow" : "Follow"}
             </button>
           )}
 
           {bio && (
-            <div className="text-gray-300 text-base text-center mb-2 whitespace-pre-line max-w-xl">{bio}</div>
+            <div className="text-gray-300 text-base text-center mb-2 whitespace-pre-line max-w-xl leading-7">{bio}</div>
           )}
-          <div className="flex gap-4 text-gray-400 text-sm mt-2">
+          <div className="flex flex-wrap justify-center gap-4 text-gray-400 text-sm mt-2">
             {location && <span>{location}</span>}
             {website && (
               <span>
@@ -463,10 +464,19 @@ export default function UserProfilePage({ params }: { params: { address: string 
             )}
           </div>
 
-          <div className="flex gap-6 text-gray-400 text-sm mt-3">
-            <span><span className="font-bold text-white">{sortedPosts.length}</span> Posts</span>
-            <span><span className="font-bold text-white">{followStats.followers}</span> Followers</span>
-            <span><span className="font-bold text-white">{followStats.following}</span> Following</span>
+          <div className="mt-5 grid w-full max-w-lg grid-cols-3 gap-3">
+            <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+              <div className="text-xl font-bold text-white">{sortedPosts.length}</div>
+              <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Posts</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+              <div className="text-xl font-bold text-white">{followStats.followers}</div>
+              <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Followers</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+              <div className="text-xl font-bold text-white">{followStats.following}</div>
+              <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Following</div>
+            </div>
           </div>
 
           {sortedPosts.length > 0 && (
@@ -475,18 +485,32 @@ export default function UserProfilePage({ params }: { params: { address: string 
             </div>
           )}
         </div>
+        </section>
 
-        <div className="px-6 py-8">
-          <h3 className="text-xl font-semibold mb-4">Posts</h3>
+        <div className="animate-fade-up animate-fade-up-delay-1 mt-6 rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-semibold text-white">Posts</h3>
+              <p className="text-xs text-gray-400">
+                {postsSource === "local" ? "Showing app-managed local records." : "Showing public profile posts."}
+              </p>
+            </div>
+            <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-gray-400">
+              {resolvedAuthor ? "Active" : "Loading"}
+            </span>
+          </div>
           {loading ? (
-            <p className="text-gray-400">Loading...</p>
+            <div className="space-y-5">
+              <ProfilePostSkeleton compact={settings.compactFeed} />
+              <ProfilePostSkeleton compact={settings.compactFeed} />
+            </div>
           ) : error ? (
-            <p className="text-red-400">{error}</p>
+            <p className="text-sm text-red-300">{error}</p>
           ) : sortedPosts.length === 0 ? (
-            <p className="text-gray-500">No posts yet.</p>
+            <p className="text-sm text-gray-500">No posts yet.</p>
           ) : (
-            <div className="space-y-4">
-              {sortedPosts.map((post) => (
+            <div className="space-y-5">
+              {sortedPosts.map((post, index) => (
                 (() => {
                   const rawUsername = post.author.username?.localName?.trim() ?? "";
                   const hasDistinctUsername =
@@ -498,26 +522,33 @@ export default function UserProfilePage({ params }: { params: { address: string 
                   const secondaryAuthorLabel = hasDistinctUsername
                     ? post.author.address
                     : "";
+                  const hasMedia = (post.metadata?.media?.length ?? 0) > 0;
                   return (
                     <article
                       key={post.id}
-                      className="border border-gray-700 bg-gray-900 rounded-2xl p-4 flex gap-4 shadow-sm transition-shadow hover:shadow-lg hover:bg-gray-800"
+                      className={`animate-fade-up rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.07] via-white/[0.04] to-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] transition duration-200 hover:border-white/15 hover:bg-white/[0.07] ${
+                        settings.compactFeed ? "p-4" : "p-5"
+                      }`}
+                      style={{ animationDelay: `${Math.min(index, 5) * 60}ms` }}
                     >
                       <Link href={`/profile/${post.author.address}`} className="shrink-0">
                         <img
                           src={avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
                           alt="avatar"
-                          className="w-10 h-10 rounded-full border border-gray-700 bg-white object-cover"
+                          className="w-10 h-10 rounded-full border border-white/10 bg-white object-cover shadow-sm"
                         />
                       </Link>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
                           <Link
                             href={`/profile/${post.author.address}`}
-                            className="font-semibold hover:underline max-w-[18rem] break-all"
+                            className="max-w-[18rem] break-all text-[15px] font-semibold text-white hover:underline"
                           >
                             {primaryAuthorLabel}
                           </Link>
+                          <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">
+                            {hasMedia ? "Media post" : "Text post"}
+                          </span>
                           {secondaryAuthorLabel && (
                             <span className="text-xs text-gray-500 break-all max-w-[18rem]">
                               {secondaryAuthorLabel}
@@ -525,60 +556,18 @@ export default function UserProfilePage({ params }: { params: { address: string 
                           )}
                         </div>
 
-                        <div className="text-white mb-2 whitespace-pre-wrap break-words">
+                        <div className={`text-white mb-4 whitespace-pre-wrap break-words ${settings.compactFeed ? "text-sm leading-6" : "text-[15px] leading-7"}`}>
                           {renderContentWithWrappedLinks(post.metadata?.content)}
                         </div>
 
                         {post.metadata?.media && post.metadata.media.length > 0 && (
-                          <div
-                            className={`mb-2 ${
-                              post.metadata.media.length === 1 ? "max-w-xl" : "grid grid-cols-2 gap-2"
-                            }`}
-                          >
-                            {post.metadata.media.map((url, idx) => {
-                              const mediaKind = getMediaKind(url);
-                              const isSingle = post.metadata!.media!.length === 1;
-                              const frameClass = isSingle
-                                ? "overflow-hidden rounded-xl border border-gray-700 bg-black"
-                                : "overflow-hidden rounded-xl border border-gray-700 bg-black aspect-square";
-
-                              if (mediaKind === "video") {
-                                return (
-                                  <div key={idx} className={frameClass}>
-                                    <video
-                                      src={url}
-                                      controls
-                                      className={isSingle ? "w-full max-h-96 object-contain" : "w-full h-full object-cover"}
-                                    />
-                                  </div>
-                                );
-                              }
-
-                              return (
-                                <div key={idx} className={frameClass}>
-                                  <img
-                                    src={url}
-                                    alt="media"
-                                    className={
-                                      mediaKind === "gif"
-                                        ? isSingle
-                                          ? "w-full max-h-96 object-contain"
-                                          : "w-full h-full object-contain"
-                                        : isSingle
-                                          ? "w-full max-h-96 object-cover"
-                                          : "w-full h-full object-cover"
-                                    }
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
+                          <PostMedia media={post.metadata.media} settings={settings} />
                         )}
 
-                        <div className="flex items-center gap-4 mt-2 text-sm text-gray-400">
-                          <span>Like {post.likes?.length ?? 0}</span>
-                          <span>Repost {post.reposts?.length ?? 0}</span>
-                          <span>Replies {post.replyCount ?? 0}</span>
+                        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/10 pt-4 text-sm text-gray-400">
+                          <span className="rounded-full border border-white/10 px-3 py-2 text-xs uppercase tracking-[0.18em]">Like / {post.likes?.length ?? 0}</span>
+                          <span className="rounded-full border border-white/10 px-3 py-2 text-xs uppercase tracking-[0.18em]">Repost / {post.reposts?.length ?? 0}</span>
+                          <span className="rounded-full border border-white/10 px-3 py-2 text-xs uppercase tracking-[0.18em]">Replies / {post.replyCount ?? 0}</span>
                           <span className="text-xs text-gray-500">
                             {new Date(post.timestamp).toLocaleString()}
                           </span>
@@ -592,7 +581,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
                 <button
                   onClick={() => void loadMorePosts()}
                   disabled={loadingMore}
-                  className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm text-gray-200 hover:bg-gray-800 disabled:opacity-50"
+                  className="w-full rounded-full border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-gray-200 transition hover:bg-white/[0.06] disabled:opacity-50"
                 >
                   {loadingMore ? "Loading..." : "Load more posts"}
                 </button>
@@ -602,5 +591,32 @@ export default function UserProfilePage({ params }: { params: { address: string 
         </div>
       </div>
     </AppShell>
+  );
+}
+
+function ProfilePostSkeleton({ compact }: { compact: boolean }) {
+  return (
+    <div
+      className={`animate-pulse rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.07] via-white/[0.04] to-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] ${
+        compact ? "p-4" : "p-5"
+      }`}
+      aria-hidden="true"
+    >
+      <div className="mb-4 flex items-start gap-3">
+        <div className="h-10 w-10 rounded-full bg-white/10" />
+        <div className="space-y-2">
+          <div className="h-4 w-36 rounded-full bg-white/10" />
+          <div className="h-3 w-28 rounded-full bg-white/5" />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <div className="h-4 w-full rounded-full bg-white/10" />
+        <div className="h-4 w-[82%] rounded-full bg-white/10" />
+      </div>
+      <div className="mt-4 flex gap-2 border-t border-white/10 pt-4">
+        <div className="h-9 w-20 rounded-full bg-white/10" />
+        <div className="h-9 w-24 rounded-full bg-white/5" />
+      </div>
+    </div>
   );
 }

@@ -14,24 +14,39 @@ export default function Navbar() {
   );
 
   useEffect(() => {
+    const controller = new AbortController();
+
     if (!authenticated || !walletAddress) {
       setLensAccountAddress(null);
       return;
     }
-    fetch("/api/lens/check-profile", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address: walletAddress }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
+
+    async function resolveLensAccountAddress() {
+      try {
+        const res = await fetch("/api/lens/check-profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address: walletAddress }),
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const data = (await res.json().catch(() => ({}))) as { accountAddress?: string };
+        if (!res.ok) {
+          setLensAccountAddress(null);
+          return;
+        }
         setLensAccountAddress(
-          typeof data?.accountAddress === "string" ? data.accountAddress : null
+          typeof data.accountAddress === "string" ? data.accountAddress : null
         );
-      })
-      .catch(() => {
-        setLensAccountAddress(null);
-      });
+      } catch {
+        if (!controller.signal.aborted) {
+          setLensAccountAddress(null);
+        }
+      }
+    }
+
+    void resolveLensAccountAddress();
+    return () => controller.abort();
   }, [authenticated, walletAddress]);
 
 

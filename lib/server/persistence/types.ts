@@ -27,6 +27,30 @@ export type PersistedDirectMessageRecord = {
   readAt?: string;
 };
 
+export type PersistedBookmarkRecord = {
+  id: string;
+  ownerAddress: string;
+  postId: string;
+  createdAt: string;
+};
+
+export type PersistedUserListRecord = {
+  id: string;
+  ownerAddress: string;
+  name: string;
+  members: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PersistedUserSettingsRecord = {
+  ownerAddress: string;
+  compactFeed: boolean;
+  autoplayVideos: boolean;
+  hideMediaPreviews: boolean;
+  updatedAt: string;
+};
+
 export type ChainSocialState = {
   posts: Post[];
   replies: Reply[];
@@ -35,6 +59,9 @@ export type ChainSocialState = {
   postOutbox: PostOutboxItem[];
   notifications?: PersistedNotificationRecord[];
   directMessages?: PersistedDirectMessageRecord[];
+  bookmarks?: PersistedBookmarkRecord[];
+  userLists?: PersistedUserListRecord[];
+  userSettings?: PersistedUserSettingsRecord[];
   compliance?: PersistedComplianceState;
 };
 
@@ -52,5 +79,8 @@ export function createEmptyState(): ChainSocialState {
     postOutbox: [],
     notifications: [],
     directMessages: [],
+    bookmarks: [],
+    userLists: [],
+    userSettings: [],
   };
 }
