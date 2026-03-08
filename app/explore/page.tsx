@@ -310,6 +310,7 @@ export default function ExplorePage() {
   }
 
   async function handleBookmark(postId: string) {
+    if (!authenticated || !viewerAddress) return;
     try {
       const ids = await toggleBookmarkId(postId);
       setBookmarkedPostIds(ids);
@@ -622,6 +623,7 @@ export default function ExplorePage() {
                     <button
                       className={`flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition-colors ${bookmarked ? "bg-yellow-400/10 text-yellow-200" : "border border-white/10 text-gray-300 hover:bg-white/[0.06]"}`}
                       onClick={() => void handleBookmark(post.id)}
+                      disabled={!authenticated}
                     >
                       <span className="text-xs uppercase tracking-[0.18em]">{bookmarked ? "Saved" : "Save"}</span>
                     </button>

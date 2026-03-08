@@ -62,6 +62,7 @@ export type Repost = {
   postId: string;
   address: string;
   createdAt: string;
+  publicationId?: string;
 };
 
 export type ListPostsInput = {

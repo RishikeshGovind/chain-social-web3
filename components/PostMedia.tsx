@@ -42,11 +42,11 @@ export default function PostMedia({ media, settings }: PostMediaProps) {
   }
 
   return (
-    <div className={`mb-2 ${isSingle ? "max-w-xl" : "grid grid-cols-2 gap-2"}`}>
+    <div className={`mb-2 ${isSingle ? "mx-auto max-w-xl" : "grid grid-cols-2 gap-2"}`}>
       {media.map((url, idx) => {
         const mediaKind = getMediaKind(url);
         const frameClass = isSingle
-          ? "overflow-hidden rounded-xl border border-gray-700 bg-black"
+          ? "mx-auto overflow-hidden rounded-xl border border-gray-700 bg-black"
           : "overflow-hidden rounded-xl border border-gray-700 bg-black aspect-square";
 
         if (mediaKind === "video") {

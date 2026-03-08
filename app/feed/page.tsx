@@ -10,6 +10,7 @@ import { BOOKMARKS_CHANGED_EVENT, loadBookmarks, readBookmarks, toggleBookmarkId
 import { hasFunctionalConsent } from "@/lib/client/consent";
 import { useUserSettings } from "@/lib/client/settings";
 import PostMedia from "@/components/PostMedia";
+import { MAX_POST_LENGTH } from "@/lib/posts/content";
 
 type Post = {
   id: string;
@@ -82,7 +83,6 @@ type FeedResponse = {
 };
 
 const PAGE_SIZE = 20;
-const MAX_POST_LENGTH = 280;
 
 function comparePostsDesc(a: Post, b: Post): number {
   if (a.timestamp === b.timestamp) {
@@ -861,6 +861,7 @@ export default function FeedPage() {
   }
 
   async function handleBookmark(postId: string) {
+    if (!isAuthReady || !authenticated || !viewerAddress) return;
     try {
       const ids = await toggleBookmarkId(postId);
       setBookmarkedPostIds(ids);
@@ -1360,7 +1361,7 @@ export default function FeedPage() {
                           bookmarked ? "bg-yellow-400/10 text-yellow-200" : "border border-white/10 text-gray-300 hover:bg-white/[0.06]"
                         }`}
                         onClick={() => void handleBookmark(post.id)}
-                        disabled={post.optimistic}
+                        disabled={!isAuthReady || !authenticated || post.optimistic}
                       >
                         <span className="text-xs uppercase tracking-[0.18em]">
                           {bookmarked ? "Saved" : "Save"}

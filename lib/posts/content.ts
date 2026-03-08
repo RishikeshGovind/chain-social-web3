@@ -1,6 +1,6 @@
 //lib/posts/content.ts
 
-export const MAX_POST_LENGTH = 280;
+export const MAX_POST_LENGTH = 1000;
 
 export function normalizeAddress(address: string) {
   return address.trim().toLowerCase();

@@ -66,11 +66,15 @@ async function getLensAccountAddress(walletAddress: string): Promise<string | nu
 }
 
 const LOCAL_MERGE_TIMEOUT_MS = Number.parseInt(
-  process.env.CHAINSOCIAL_LENS_LOCAL_MERGE_TIMEOUT_MS ?? "700",
+  process.env.CHAINSOCIAL_LENS_LOCAL_MERGE_TIMEOUT_MS ?? "1500",
   10
 );
 const LOCAL_READ_TIMEOUT_MS = Number.parseInt(
-  process.env.CHAINSOCIAL_LOCAL_READ_TIMEOUT_MS ?? "1200",
+  process.env.CHAINSOCIAL_LOCAL_READ_TIMEOUT_MS ?? "4000",
+  10
+);
+const RELAXED_LOCAL_READ_TIMEOUT_MS = Number.parseInt(
+  process.env.CHAINSOCIAL_RELAXED_LOCAL_READ_TIMEOUT_MS ?? "10000",
   10
 );
 const CHAIN_ONLY_WRITES = (() => {
@@ -98,6 +102,10 @@ function isRecentTimestamp(timestamp: string, windowMs: number) {
   const ts = Date.parse(timestamp);
   if (Number.isNaN(ts)) return false;
   return Date.now() - ts <= windowMs;
+}
+
+function isTimeoutError(error: unknown) {
+  return error instanceof Error && error.message.toLowerCase().includes("timed out");
 }
 
 function postSignature(input: {
@@ -315,6 +323,42 @@ export async function GET(req: Request) {
             lensFallbackError: lensMessage,
           });
         } catch (localError) {
+          if (isTimeoutError(localError)) {
+            try {
+              const relaxedLocalData = await withTimeout(
+                listPosts({
+                  limit: boundedLimit,
+                  cursor,
+                  author,
+                }),
+                safeTimeout(RELAXED_LOCAL_READ_TIMEOUT_MS, 10000),
+                "relaxed local fallback posts read"
+              );
+              return NextResponse.json({
+                ...relaxedLocalData,
+                source: "local",
+                resolvedAuthor: author ?? null,
+                lensFallbackError: lensMessage,
+                localFallbackWarning:
+                  localError instanceof Error ? localError.message : "local fallback was slow",
+              });
+            } catch (relaxedLocalError) {
+              const relaxedMessage =
+                relaxedLocalError instanceof Error
+                  ? relaxedLocalError.message
+                  : "unknown relaxed local fallback error";
+              console.error("Relaxed local feed fallback failed:", relaxedMessage);
+              return NextResponse.json({
+                posts: [],
+                nextCursor: null,
+                source: "local",
+                resolvedAuthor: author ?? null,
+                lensFallbackError: lensMessage,
+                localFallbackError: relaxedMessage,
+              });
+            }
+          }
+
           const localMessage =
             localError instanceof Error ? localError.message : "unknown local fallback error";
           console.error("Local feed fallback failed:", localMessage);
@@ -343,6 +387,40 @@ export async function GET(req: Request) {
         "local posts read"
       );
     } catch (localError) {
+      if (isTimeoutError(localError)) {
+        try {
+          localData = await withTimeout(
+            listPosts({
+              limit: boundedLimit,
+              cursor,
+              author,
+            }),
+            safeTimeout(RELAXED_LOCAL_READ_TIMEOUT_MS, 10000),
+            "relaxed local posts read"
+          );
+          return NextResponse.json({
+            ...localData,
+            source: "local",
+            resolvedAuthor: author ?? null,
+            localFallbackWarning:
+              localError instanceof Error ? localError.message : "local feed was slow",
+          });
+        } catch (relaxedLocalError) {
+          const relaxedMessage =
+            relaxedLocalError instanceof Error
+              ? relaxedLocalError.message
+              : "local feed unavailable";
+          console.error("Relaxed local feed load failed:", relaxedMessage);
+          return NextResponse.json({
+            posts: [],
+            nextCursor: null,
+            source: "local",
+            resolvedAuthor: author ?? null,
+            localFallbackError: relaxedMessage,
+          });
+        }
+      }
+
       const localMessage =
         localError instanceof Error ? localError.message : "local feed unavailable";
       console.error("Local feed load failed:", localMessage);

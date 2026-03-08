@@ -409,6 +409,84 @@ export async function toggleLensLike(params: {
   return { liked: !params.currentlyLiked };
 }
 
+export async function createLensRepost(params: {
+  postId: string;
+  accessToken: string;
+}) {
+  const data = await executeVariants(
+    [
+      {
+        query: `
+          mutation Post($request: CreatePostRequest!) {
+            post(request: $request) {
+              ... on PostResponse { hash }
+              ... on SelfFundedTransactionRequest { reason }
+              ... on SponsoredTransactionRequest { reason }
+              ... on TransactionWillFail { reason }
+            }
+          }
+        `,
+        variables: {
+          request: {
+            repostOf: {
+              post: params.postId,
+            },
+          },
+        },
+      },
+      {
+        query: `
+          mutation Post($request: CreatePostRequest!) {
+            post(request: $request) {
+              ... on PostResponse { hash }
+              ... on SelfFundedTransactionRequest { reason }
+              ... on SponsoredTransactionRequest { reason }
+              ... on TransactionWillFail { reason }
+            }
+          }
+        `,
+        variables: {
+          request: {
+            mirrorOn: {
+              post: params.postId,
+            },
+          },
+        },
+      },
+      {
+        query: `
+          mutation Post($request: CreatePostRequest!) {
+            post(request: $request) {
+              ... on PostResponse { hash }
+              ... on SelfFundedTransactionRequest { reason }
+              ... on SponsoredTransactionRequest { reason }
+              ... on TransactionWillFail { reason }
+            }
+          }
+        `,
+        variables: {
+          request: {
+            mirrorOn: params.postId,
+          },
+        },
+      },
+    ],
+    params.accessToken
+  );
+
+  const result = extractFirstResult(data);
+  const publicationId = asString(result?.hash) ?? asString(result?.id);
+  if (!publicationId) {
+    const reason = asString(result?.reason);
+    throw new Error(reason || "Lens repost failed: missing publication id");
+  }
+
+  return {
+    publicationId,
+    reposted: true,
+  };
+}
+
 export async function toggleLensFollow(params: {
   targetAddress: string;
   currentlyFollowing: boolean;

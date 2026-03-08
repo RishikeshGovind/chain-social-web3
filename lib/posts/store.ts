@@ -451,6 +451,60 @@ export async function toggleRepost(postId: string, actorAddress: string) {
   };
 }
 
+export async function getRepostRecord(postId: string, actorAddress: string) {
+  const store = await loadStore();
+  const address = normalizeAddress(actorAddress);
+  return (
+    store.reposts.find((item) => item.postId === postId && item.address === address) ?? null
+  );
+}
+
+export async function toggleRepostWithPublicationId(
+  postId: string,
+  actorAddress: string,
+  publicationId?: string
+) {
+  const store = await loadStore();
+  const address = normalizeAddress(actorAddress);
+
+  const existingIndex = store.reposts.findIndex(
+    (item) => item.postId === postId && item.address === address
+  );
+
+  let reposted = false;
+  if (existingIndex >= 0) {
+    store.reposts.splice(existingIndex, 1);
+    reposted = false;
+  } else {
+    store.reposts.push({
+      postId,
+      address,
+      createdAt: new Date().toISOString(),
+      ...(publicationId ? { publicationId } : {}),
+    });
+    reposted = true;
+  }
+
+  await saveStore(store);
+
+  const post = store.posts.find((item) => item.id === postId);
+  const reposts = store.reposts
+    .filter((item) => item.postId === postId)
+    .map((item) => item.address);
+
+  return {
+    post: post
+      ? {
+          ...post,
+          replyCount: store.replies.filter((reply) => reply.postId === post.id).length,
+          reposts,
+        }
+      : null,
+    reposted,
+    reposts: reposts.length,
+  };
+}
+
 export async function getRepostsForPosts(postIds: string[]) {
   const store = await loadStore();
   const result = new Map<string, string[]>();

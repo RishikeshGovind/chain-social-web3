@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { isValidAddress } from "@/lib/posts/content";
-import { toggleRepost } from "@/lib/posts/store";
+import { getRepostRecord, toggleRepost, toggleRepostWithPublicationId } from "@/lib/posts/store";
 import { notifyPostReposted } from "@/lib/server/notifications/helpers";
-import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
+import { createLensRepost, deleteLensPost } from "@/lib/lens/writes";
+import { getActorAddressFromLensCookie, getLensAccessTokenFromCookie } from "@/lib/server/auth/lens-actor";
 
 export async function PATCH(
   req: Request,
@@ -22,18 +23,51 @@ export async function PATCH(
       return NextResponse.json({ error: "Missing post id" }, { status: 400 });
     }
 
+    const body = await req.json().catch(() => ({}));
+    const currentlyReposted =
+      typeof body?.currentlyReposted === "boolean" ? body.currentlyReposted : false;
+
     const useLensData =
       process.env.LENS_POSTS_SOURCE === "lens" ||
       process.env.NEXT_PUBLIC_LENS_POSTS_SOURCE === "lens";
 
     if (useLensData) {
-      return NextResponse.json(
-        {
-          error:
-            "Repost is not yet implemented as a Lens-native action in this app. Action was not published.",
-        },
-        { status: 501 }
+      const accessToken = await getLensAccessTokenFromCookie();
+      if (!accessToken) {
+        return NextResponse.json(
+          { error: "Lens access token missing. Reconnect Lens." },
+          { status: 401 }
+        );
+      }
+
+      if (currentlyReposted) {
+        const existing = await getRepostRecord(postId, actorAddress);
+        const publicationId = existing?.publicationId;
+        if (!publicationId) {
+          return NextResponse.json(
+            {
+              error:
+                "This repost cannot be removed because its Lens publication id is unavailable.",
+            },
+            { status: 409 }
+          );
+        }
+
+        await deleteLensPost({ postId: publicationId, accessToken });
+        const result = await toggleRepost(postId, actorAddress);
+        return NextResponse.json({ success: true, ...result, source: "lens" });
+      }
+
+      const lensResult = await createLensRepost({ postId, accessToken });
+      const result = await toggleRepostWithPublicationId(
+        postId,
+        actorAddress,
+        lensResult.publicationId
       );
+      if (result.reposted) {
+        await notifyPostReposted({ postId, actorAddress, accessToken });
+      }
+      return NextResponse.json({ success: true, ...result, source: "lens" });
     }
 
     const result = await toggleRepost(postId, actorAddress);
