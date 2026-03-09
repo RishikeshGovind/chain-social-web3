@@ -3,6 +3,8 @@
 import { lensRequest } from "../lens";
 import { normalizeAddress } from "../posts/content";
 import type { Post, Reply } from "../posts/types";
+import { randomUUID } from "node:crypto";
+import { logger } from "@/lib/server/logger";
 
 type MutationVariant = {
   query: string;
@@ -55,40 +57,27 @@ async function executeVariants(variants: MutationVariant[], accessToken: string)
   throw new Error("No Lens mutation variant succeeded");
 }
 
-// Historically the Lens API accepted raw `content` strings, but newer
-// versions mandate a `contentUri` field that points to metadata hosted at a
-// publicly accessible URI. For compatibility we build a small JSON document and
-// embed it as a `data:` URI so no external upload is required. The object is
-// simple enough for most feed consumers, and it keeps the example self‑contained.
+// Lens expects a URI for publication metadata. To avoid external upload
+// requirements in local/dev usage, we inline a compact JSON document into a
+// data URI. Keep this payload intentionally small to reduce URI parser issues.
 export function buildContentUri(content: string, media?: string[]): string {
-  // Build Lens v3 compatible metadata structure
   const metadata: Record<string, unknown> = {
-    $schema: "https://json-schemas.lens.dev/publications/text-only/3.0.0.json",
-    lens: {
-      mainContentFocus: "TEXT_ONLY",
-      content,
-      locale: "en",
-      id: crypto.randomUUID(),
-    },
+    version: "3.0.0",
+    mainContentFocus: "TEXT_ONLY",
+    content,
+    id: randomUUID(),
+    locale: "en",
   };
-  
+
   if (media && media.length > 0) {
-    metadata.lens = {
-      ...(metadata.lens as Record<string, unknown>),
-      mainContentFocus: "IMAGE",
-      image: {
-        item: media[0],
-        type: "image/jpeg",
-      },
-      attachments: media.map((url) => ({
-        item: url,
-        type: "image/jpeg",
-      })),
-    };
+    metadata.mainContentFocus = "IMAGE";
+    metadata.image = { item: media[0] };
+    metadata.attachments = media.map((url) => ({ item: url }));
   }
-  
+
   const json = JSON.stringify(metadata);
-  return `data:application/json,${encodeURIComponent(json)}`;
+  const base64 = Buffer.from(json, "utf8").toString("base64");
+  return `data:application/json;base64,${base64}`;
 }
 
 /**
@@ -177,11 +166,14 @@ export async function createLensPost(params: {
       params.content,
       params.media
     );
-    // debug: log shape once to aid diagnosing schema mismatches during development
-    console.log("[Lens] createPost request:", JSON.stringify(requestBody, null, 2));
-    console.log("[Lens] createPost actorAddress:", params.actorAddress);
-    console.log("[Lens] createPost accessToken exists:", !!params.accessToken);
-    console.log("[Lens] createPost accessToken preview:", params.accessToken.slice(0, 30) + "...");
+    // Avoid logging full data URI payloads (large + user content); log shape only.
+    logger.debug("lens.create_post.request", {
+      hasContentUri: typeof requestBody.contentUri === "string",
+      contentUriLength:
+        typeof requestBody.contentUri === "string" ? requestBody.contentUri.length : 0,
+      hasMedia: !!params.media?.length,
+    });
+    logger.debug("lens.create_post.actor", { actorAddress: params.actorAddress });
 
     // simulate before making network call (tests only)
     maybeSimulateOnboarding(params.content);
@@ -213,7 +205,11 @@ export async function createLensPost(params: {
     );
 
     const result = extractFirstResult(data);
-    console.log("[Lens] Post result:", JSON.stringify(result, null, 2));
+    logger.debug("lens.create_post.result", {
+      typename: getGraphQLTypename(result),
+      hasHash: !!asString(result?.hash),
+      hasReason: !!asString(result?.reason),
+    });
     
     const typename = getGraphQLTypename(result);
     const reason = asString(result?.reason);
@@ -236,7 +232,7 @@ export async function createLensPost(params: {
       throw new Error("Lens post failed: missing post hash in response");
     }
 
-    const id = hash ? hash : `lens-${crypto.randomUUID()}`;
+    const id = hash ? hash : `lens-${randomUUID()}`;
 
     const post: Post = {
       id,
@@ -251,7 +247,7 @@ export async function createLensPost(params: {
 
     return post;
   } catch (error) {
-    console.error("Lens post mutation failed:", error);
+    logger.error("lens.create_post.failed", { error });
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("ONBOARDING_USER")) {
       // try to refresh/switch account and retry once, since token may reflect
@@ -283,7 +279,7 @@ export async function createLensPost(params: {
         );
         const retryResult = extractFirstResult(retryData);
         const hash = asString(retryResult?.hash);
-        const id = hash ? hash : `lens-${crypto.randomUUID()}`;
+        const id = hash ? hash : `lens-${randomUUID()}`;
         return {
           id,
           timestamp: new Date().toISOString(),
@@ -293,7 +289,7 @@ export async function createLensPost(params: {
           replyCount: 0,
         } as Post;
       } catch (retryError) {
-        console.warn("retry after switch failed", retryError);
+        logger.warn("lens.create_post.retry_after_switch_failed", { error: retryError });
       }
       // if retry didn't succeed, surface original onboarding error
       throw new LensOnboardingError(msg);
@@ -416,6 +412,84 @@ export async function toggleLensLike(params: {
   );
 
   return { liked: !params.currentlyLiked };
+}
+
+export async function createLensRepost(params: {
+  postId: string;
+  accessToken: string;
+}) {
+  const data = await executeVariants(
+    [
+      {
+        query: `
+          mutation Post($request: CreatePostRequest!) {
+            post(request: $request) {
+              ... on PostResponse { hash }
+              ... on SelfFundedTransactionRequest { reason }
+              ... on SponsoredTransactionRequest { reason }
+              ... on TransactionWillFail { reason }
+            }
+          }
+        `,
+        variables: {
+          request: {
+            repostOf: {
+              post: params.postId,
+            },
+          },
+        },
+      },
+      {
+        query: `
+          mutation Post($request: CreatePostRequest!) {
+            post(request: $request) {
+              ... on PostResponse { hash }
+              ... on SelfFundedTransactionRequest { reason }
+              ... on SponsoredTransactionRequest { reason }
+              ... on TransactionWillFail { reason }
+            }
+          }
+        `,
+        variables: {
+          request: {
+            mirrorOn: {
+              post: params.postId,
+            },
+          },
+        },
+      },
+      {
+        query: `
+          mutation Post($request: CreatePostRequest!) {
+            post(request: $request) {
+              ... on PostResponse { hash }
+              ... on SelfFundedTransactionRequest { reason }
+              ... on SponsoredTransactionRequest { reason }
+              ... on TransactionWillFail { reason }
+            }
+          }
+        `,
+        variables: {
+          request: {
+            mirrorOn: params.postId,
+          },
+        },
+      },
+    ],
+    params.accessToken
+  );
+
+  const result = extractFirstResult(data);
+  const publicationId = asString(result?.hash) ?? asString(result?.id);
+  if (!publicationId) {
+    const reason = asString(result?.reason);
+    throw new Error(reason || "Lens repost failed: missing publication id");
+  }
+
+  return {
+    publicationId,
+    reposted: true,
+  };
 }
 
 export async function toggleLensFollow(params: {

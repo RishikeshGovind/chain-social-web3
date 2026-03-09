@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { lensRequest } from "@/lib/lens";
+import { logger } from "@/lib/server/logger";
 
 type AuthenticateResult = {
   __typename?: string;
@@ -136,8 +137,7 @@ export async function POST(req: Request) {
       throw new Error("Lens authenticate did not return tokens");
     }
 
-    console.log("[Lens Auth] Got tokens, setting cookies...");
-    console.log("[Lens Auth] Access token length:", accessToken.length);
+    logger.info("lens.authenticate.tokens_received");
     
     const response = NextResponse.json({ success: true, authenticated: true });
     const secure = process.env.NODE_ENV === "production";
@@ -145,24 +145,24 @@ export async function POST(req: Request) {
     response.cookies.set("lensAccessToken", accessToken, {
       httpOnly: true,
       secure,
-      sameSite: "lax",
+      sameSite: "strict",
       path: "/",
-      maxAge: 60 * 60 * 24, // 24 hours instead of 1 hour
+      maxAge: 60 * 60, // 1 hour - shorter expiry for security
     });
 
     response.cookies.set("lensRefreshToken", refreshToken, {
       httpOnly: true,
       secure,
-      sameSite: "lax",
+      sameSite: "strict",
       path: "/",
-      maxAge: 60 * 60 * 24 * 30,
+      maxAge: 60 * 60 * 24 * 7, // 7 days for refresh token
     });
 
-    console.log("[Lens Auth] Cookies set successfully");
+    logger.info("lens.authenticate.cookies_set");
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Lens authenticate error";
-    console.error("Lens authenticate error:", message);
+    logger.error("lens.authenticate.error", { error: message });
     return NextResponse.json(
       { error: message },
       { status: 500 }

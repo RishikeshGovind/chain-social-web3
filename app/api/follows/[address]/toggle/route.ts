@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { isValidAddress, normalizeAddress } from "@/lib/posts/content";
 import { toggleFollow } from "@/lib/posts/store";
 import { toggleLensFollow } from "@/lib/lens/writes";
+import { notifyFollowed } from "@/lib/server/notifications/helpers";
+import { logger } from "@/lib/server/logger";
 import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
@@ -48,10 +50,13 @@ export async function PATCH(
           currentlyFollowing,
           accessToken,
         });
+        if (lensResult.isFollowing) {
+          await notifyFollowed({ targetAddress, actorAddress });
+        }
         return NextResponse.json({ success: true, ...lensResult, source: "lens" });
       } catch (lensError) {
         const message = lensError instanceof Error ? lensError.message : "unknown error";
-        console.warn("Lens follow mutation failed:", message);
+        logger.warn("follows.toggle.lens_failed", { error: message });
         return NextResponse.json(
           { error: `Lens follow failed: ${message}. Action was not published to Lens.` },
           { status: 502 }
@@ -66,6 +71,9 @@ export async function PATCH(
 
     if (result.type === "invalid") {
       return NextResponse.json({ error: result.message }, { status: 400 });
+    }
+    if (result.isFollowing) {
+      await notifyFollowed({ targetAddress, actorAddress });
     }
 
     return NextResponse.json({ success: true, ...result, source: "local" });

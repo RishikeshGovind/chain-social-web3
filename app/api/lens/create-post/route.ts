@@ -1,7 +1,7 @@
 //app/api/lens/create-post/route.ts
 
 import { NextResponse } from "next/server";
-import { checkPostRateLimit } from "@/lib/posts/rate-limit";
+import { checkPostRateLimit } from "@/lib/server/rate-limit";
 import {
   isValidAddress,
   parseAndValidateContent,
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const rateLimit = checkPostRateLimit(actorAddress);
+    const rateLimit = await checkPostRateLimit(actorAddress);
     if (!rateLimit.ok) {
       const retryAfterSeconds = Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1000));
       return NextResponse.json(

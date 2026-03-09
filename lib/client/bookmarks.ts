@@ -1,29 +1,54 @@
-const BOOKMARK_STORAGE_KEY = "chainsocial:bookmarks";
+export const BOOKMARKS_CHANGED_EVENT = "chainsocial:bookmarks-changed";
+
+let cachedBookmarkIds: string[] = [];
+
+function dispatchBookmarksChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(BOOKMARKS_CHANGED_EVENT));
+}
 
 export function readBookmarks(): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(BOOKMARK_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is string => typeof item === "string");
-  } catch {
-    return [];
+  return cachedBookmarkIds;
+}
+
+export async function loadBookmarks(): Promise<string[]> {
+  const res = await fetch("/api/bookmarks", {
+    credentials: "include",
+    cache: "no-store",
+  });
+  const data = (await res.json().catch(() => ({}))) as { ids?: string[]; error?: string };
+  if (res.status === 401) {
+    cachedBookmarkIds = [];
+    dispatchBookmarksChanged();
+    return cachedBookmarkIds;
   }
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to load bookmarks");
+  }
+  cachedBookmarkIds = Array.isArray(data.ids)
+    ? data.ids.filter((item): item is string => typeof item === "string")
+    : [];
+  dispatchBookmarksChanged();
+  return cachedBookmarkIds;
 }
 
-export function writeBookmarks(ids: string[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(BOOKMARK_STORAGE_KEY, JSON.stringify(ids));
-  window.dispatchEvent(new Event("chainsocial:bookmarks-changed"));
-}
-
-export function toggleBookmarkId(postId: string): string[] {
-  const existing = readBookmarks();
-  const next = existing.includes(postId)
-    ? existing.filter((id) => id !== postId)
-    : [postId, ...existing];
-  writeBookmarks(next);
-  return next;
+export async function toggleBookmarkId(postId: string): Promise<string[]> {
+  const res = await fetch("/api/bookmarks", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ postId }),
+  });
+  const data = (await res.json().catch(() => ({}))) as { ids?: string[]; error?: string };
+  if (res.status === 401) {
+    throw new Error("Connect Lens to save bookmarks.");
+  }
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to update bookmark");
+  }
+  cachedBookmarkIds = Array.isArray(data.ids)
+    ? data.ids.filter((item): item is string => typeof item === "string")
+    : [];
+  dispatchBookmarksChanged();
+  return cachedBookmarkIds;
 }

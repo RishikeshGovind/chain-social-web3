@@ -8,6 +8,7 @@
 
 # testing
 /coverage
+.tmp-posting-tests/
 
 # next.js
 /.next/

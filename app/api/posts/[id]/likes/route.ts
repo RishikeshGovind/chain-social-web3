@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { isValidAddress } from "@/lib/posts/content";
 import { toggleLike } from "@/lib/posts/store";
 import { toggleLensLike } from "@/lib/lens/writes";
+import { notifyPostLiked } from "@/lib/server/notifications/helpers";
+import { logger } from "@/lib/server/logger";
 import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
@@ -48,10 +50,13 @@ export async function PATCH(
           currentlyLiked,
           accessToken,
         });
+        if (lensResult.liked) {
+          await notifyPostLiked({ postId, actorAddress, accessToken });
+        }
         return NextResponse.json({ success: true, ...lensResult, source: "lens" });
       } catch (lensError) {
         const message = lensError instanceof Error ? lensError.message : "unknown error";
-        console.warn("Lens like mutation failed:", message);
+        logger.warn("posts.likes.lens_failed", { error: message });
         return NextResponse.json(
           { error: `Lens like failed: ${message}. Action was not published to Lens.` },
           { status: 502 }
@@ -62,6 +67,9 @@ export async function PATCH(
     const result = await toggleLike(postId, actorAddress);
     if (!result) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
+    }
+    if (result.liked) {
+      await notifyPostLiked({ postId, actorAddress });
     }
 
     return NextResponse.json({ success: true, ...result, source: "local" });

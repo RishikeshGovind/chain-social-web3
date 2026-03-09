@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { lensRequest } from "@/lib/lens";
+import { logger } from "@/lib/server/logger";
 
 type RefreshResponse = {
   refresh: {
@@ -25,7 +26,7 @@ export async function POST() {
       );
     }
 
-    console.log("[Lens Refresh] Attempting token refresh...");
+    logger.debug("lens.refresh.start");
 
     const data = await lensRequest<RefreshResponse>(
       `
@@ -53,11 +54,11 @@ export async function POST() {
     
     if (!result?.accessToken || !result?.refreshToken) {
       const reason = result?.reason || "Token refresh failed";
-      console.error("[Lens Refresh] Failed:", reason);
+      logger.warn("lens.refresh.failed", { reason });
       return NextResponse.json({ error: reason }, { status: 401 });
     }
 
-    console.log("[Lens Refresh] Got new tokens, updating cookies...");
+    logger.info("lens.refresh.succeeded");
 
     const response = NextResponse.json({ success: true });
     const secure = process.env.NODE_ENV === "production";
@@ -81,7 +82,7 @@ export async function POST() {
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Token refresh failed";
-    console.error("[Lens Refresh] Error:", message);
+    logger.error("lens.refresh.error", { error: message });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

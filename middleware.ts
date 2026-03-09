@@ -1,0 +1,67 @@
+import { NextRequest, NextResponse } from "next/server";
+import {
+  evaluateCompliance,
+  getCompliancePolicy,
+  getRequestCountry,
+} from "@/lib/server/compliance/policy";
+
+// Maximum allowed request body size (10MB)
+const MAX_BODY_SIZE = 10 * 1024 * 1024;
+
+export function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  // Skip static and build assets.
+  if (
+    pathname.startsWith("/_next/") ||
+    pathname.startsWith("/favicon") ||
+    pathname.startsWith("/public/")
+  ) {
+    return NextResponse.next();
+  }
+
+  // Enforce request body size limits for POST/PUT/PATCH requests
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) {
+    const size = parseInt(contentLength, 10);
+    if (!Number.isNaN(size) && size > MAX_BODY_SIZE) {
+      return NextResponse.json(
+        { error: "Request body too large", maxSize: MAX_BODY_SIZE },
+        { status: 413 }
+      );
+    }
+  }
+
+  const country = getRequestCountry(request.headers);
+  const decision = evaluateCompliance({
+    pathname,
+    method: request.method,
+    country,
+    policy: getCompliancePolicy(),
+  });
+
+  if (!decision.allow) {
+    return NextResponse.json(
+      {
+        error: decision.message,
+        code: decision.code,
+        country: decision.country,
+      },
+      {
+        status: decision.status,
+        headers: {
+          "X-Chainsocial-Policy": decision.code,
+          "X-Chainsocial-Country": decision.country,
+        },
+      }
+    );
+  }
+
+  const response = NextResponse.next();
+  response.headers.set("X-Chainsocial-Country", country);
+  return response;
+}
+
+export const config = {
+  matcher: ["/:path*"],
+};

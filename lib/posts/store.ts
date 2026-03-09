@@ -1,20 +1,28 @@
 //lib/posts/store.ts
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { normalizeAddress } from "@/lib/posts/content";
 import { canMutateOwnedResource, canToggleFollow } from "@/lib/posts/authz";
-import type { Follow, ListPostsInput, ListRepliesInput, Post, Reply, Repost } from "@/lib/posts/types";
+import type {
+  Follow,
+  ListPostsInput,
+  ListRepliesInput,
+  Post,
+  PostOutboxItem,
+  PostOutboxStatus,
+  Reply,
+  Repost,
+} from "@/lib/posts/types";
+import { mergeState, readState } from "@/lib/server/persistence";
+import { postsMutex } from "@/lib/server/mutex";
+import { randomUUID } from "node:crypto";
 
 type StoreData = {
   posts: Post[];
   replies: Reply[];
   follows: Follow[];
   reposts: Repost[];
+  postOutbox: PostOutboxItem[];
 };
-
-const DATA_DIR = path.join(process.cwd(), "data");
-const POSTS_FILE = path.join(DATA_DIR, "posts.json");
 
 const DEFAULT_POSTS: Post[] = [
   {
@@ -41,8 +49,15 @@ const DEFAULT_POSTS: Post[] = [
   },
 ];
 
+// Cache with TTL for memory management
 let cachedStore: StoreData | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 let writeChain = Promise.resolve();
+
+function isCacheValid(): boolean {
+  return cachedStore !== null && Date.now() - cacheTimestamp < CACHE_TTL_MS;
+}
 
 function encodeCursor(item: { timestamp: string; id: string }) {
   return Buffer.from(JSON.stringify({ timestamp: item.timestamp, id: item.id })).toString(
@@ -97,25 +112,24 @@ function withRepostCounts(posts: Post[], reposts: Repost[]) {
 }
 
 async function persist(store: StoreData) {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(POSTS_FILE, JSON.stringify(store, null, 2), "utf8");
+  await mergeState(store);
 }
 
 async function loadStore(): Promise<StoreData> {
-  if (cachedStore) return cachedStore;
+  if (isCacheValid()) return cachedStore!;
 
-  try {
-    const raw = await readFile(POSTS_FILE, "utf8");
-    const parsed = JSON.parse(raw) as Partial<StoreData>;
+  const parsed = (await readState()) as Partial<StoreData> | null;
+  if (!parsed) {
+    cachedStore = { posts: DEFAULT_POSTS, replies: [], follows: [], reposts: [], postOutbox: [] };
+    await persist(cachedStore);
+  } else {
     cachedStore = {
       posts: Array.isArray(parsed.posts) ? parsed.posts : DEFAULT_POSTS,
       replies: Array.isArray(parsed.replies) ? parsed.replies : [],
       follows: Array.isArray(parsed.follows) ? parsed.follows : [],
       reposts: Array.isArray(parsed.reposts) ? parsed.reposts : [],
+      postOutbox: Array.isArray(parsed.postOutbox) ? parsed.postOutbox : [],
     };
-  } catch {
-    cachedStore = { posts: DEFAULT_POSTS, replies: [], follows: [], reposts: [] };
-    await persist(cachedStore);
   }
 
   cachedStore.posts = cachedStore.posts
@@ -151,6 +165,18 @@ async function loadStore(): Promise<StoreData> {
     address: normalizeAddress(repost.address),
   }));
 
+  cachedStore.postOutbox = cachedStore.postOutbox
+    .map((item) => ({
+      ...item,
+      address: normalizeAddress(item.address),
+      status: item.status ?? "pending",
+      attempts: Number.isFinite(item.attempts) ? item.attempts : 0,
+      createdAt: item.createdAt ?? new Date().toISOString(),
+      updatedAt: item.updatedAt ?? item.createdAt ?? new Date().toISOString(),
+    }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  cacheTimestamp = Date.now();
   return cachedStore;
 }
 
@@ -190,63 +216,272 @@ export async function listPosts({ limit, cursor, author }: ListPostsInput) {
   return { posts: items, nextCursor };
 }
 
+export async function getPostById(postId: string) {
+  const store = await loadStore();
+  const post = store.posts.find((item) => item.id === postId);
+  if (!post) return null;
+
+  return {
+    ...post,
+    replyCount: store.replies.filter((reply) => reply.postId === post.id).length,
+    reposts: withRepostCounts([post], store.reposts)[0]?.reposts ?? [],
+  };
+}
+
 export async function createPost(params: {
+  id?: string;
+  timestamp?: string;
   address: string;
   content: string;
   username?: string;
   media?: string[];
+  chainPostId?: string;
+  publishStatus?: "published" | "pending" | "failed" | "local_only";
 }) {
-  const store = await loadStore();
+  return postsMutex.withLock(async () => {
+    const store = await loadStore();
+    const inferredPublishStatus =
+      params.publishStatus ??
+      (params.id && /^0x[a-f0-9]{64}$/i.test(params.id) ? "published" : "local_only");
+    const chainPostId =
+      params.chainPostId ??
+      (inferredPublishStatus === "published" && params.id ? params.id : undefined);
 
-  const post: Post = {
-    id: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-    metadata: {
-      content: params.content,
-      ...(params.media ? { media: params.media } : {}),
-    },
-    author: {
-      address: normalizeAddress(params.address),
-      ...(params.username ? { username: { localName: params.username.slice(0, 32) } } : {}),
-    },
-    likes: [],
-    reposts: [],
-  };
+    const post: Post = {
+      id: params.id ?? randomUUID(),
+      timestamp: params.timestamp ?? new Date().toISOString(),
+      ...(chainPostId ? { chainPostId } : {}),
+      publishStatus: inferredPublishStatus,
+      indexedAt: new Date().toISOString(),
+      metadata: {
+        content: params.content,
+        ...(params.media ? { media: params.media } : {}),
+      },
+      author: {
+        address: normalizeAddress(params.address),
+        ...(params.username ? { username: { localName: params.username.slice(0, 32) } } : {}),
+      },
+      likes: [],
+      reposts: [],
+    };
 
-  store.posts.unshift(post);
-  await saveStore(store);
-  return { ...post, replyCount: 0 };
+    const existingIndex = store.posts.findIndex((item) => item.id === post.id);
+    if (existingIndex >= 0) {
+      store.posts[existingIndex] = post;
+    } else {
+      store.posts.unshift(post);
+    }
+    store.posts.sort(compareDesc);
+    cacheTimestamp = Date.now();
+    await saveStore(store);
+    return { ...post, replyCount: 0 };
+  });
 }
 
-export async function toggleLike(postId: string, actorAddress: string) {
+function isChainPostId(value: string) {
+  return /^0x[a-f0-9]{64}$/i.test(value);
+}
+
+function isLegacyLocalPost(post: Post) {
+  if (post.publishStatus === "published") return false;
+  return !isChainPostId(post.id);
+}
+
+export async function listLegacyLocalPosts(params?: { address?: string; limit?: number }) {
   const store = await loadStore();
-  const post = store.posts.find((item) => item.id === postId);
+  const normalizedAddress = params?.address ? normalizeAddress(params.address) : undefined;
+  const limit = Math.min(Math.max(params?.limit ?? 100, 1), 500);
+  const items = store.posts
+    .filter((post) => (normalizedAddress ? post.author.address === normalizedAddress : true))
+    .filter((post) => isLegacyLocalPost(post))
+    .sort(compareDesc)
+    .slice(0, limit);
+  return items;
+}
 
-  if (!post) return null;
+export async function listPostOutbox(params?: { address?: string; statuses?: PostOutboxStatus[] }) {
+  const store = await loadStore();
+  const normalizedAddress = params?.address ? normalizeAddress(params.address) : undefined;
+  const statuses = params?.statuses ? new Set(params.statuses) : null;
+  return store.postOutbox.filter((item) => {
+    if (normalizedAddress && item.address !== normalizedAddress) return false;
+    if (statuses && !statuses.has(item.status)) return false;
+    return true;
+  });
+}
 
-  const address = normalizeAddress(actorAddress);
-  const index = post.likes.indexOf(address);
-  const liked = index === -1;
+export async function enqueueLegacyPostsForMigration(params: { address: string; limit?: number }) {
+  const store = await loadStore();
+  const address = normalizeAddress(params.address);
+  const limit = Math.min(Math.max(params.limit ?? 100, 1), 500);
+  const candidates = store.posts
+    .filter((post) => post.author.address === address && isLegacyLocalPost(post))
+    .sort(compareDesc)
+    .slice(0, limit);
 
-  if (liked) {
-    post.likes.push(address);
-  } else {
-    post.likes.splice(index, 1);
+  let enqueued = 0;
+  for (const post of candidates) {
+    const exists = store.postOutbox.find(
+      (item) => item.postId === post.id && item.address === address && item.status !== "published"
+    );
+    if (exists) continue;
+    const now = new Date().toISOString();
+    store.postOutbox.unshift({
+      id: randomUUID(),
+      postId: post.id,
+      address,
+      content: post.metadata.content,
+      media: post.metadata.media,
+      status: "pending",
+      attempts: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    enqueued += 1;
+  }
+
+  if (enqueued > 0) {
+    await saveStore(store);
+  }
+
+  return {
+    scanned: candidates.length,
+    enqueued,
+  };
+}
+
+export async function markPostOutboxProcessing(outboxId: string) {
+  const store = await loadStore();
+  const item = store.postOutbox.find((entry) => entry.id === outboxId);
+  if (!item) return null;
+  item.status = "processing";
+  item.updatedAt = new Date().toISOString();
+  await saveStore(store);
+  return item;
+}
+
+export async function markPostOutboxFailed(outboxId: string, error: string) {
+  const store = await loadStore();
+  const item = store.postOutbox.find((entry) => entry.id === outboxId);
+  if (!item) return null;
+  item.status = "failed";
+  item.attempts += 1;
+  item.lastError = error.slice(0, 500);
+  item.updatedAt = new Date().toISOString();
+  await saveStore(store);
+  return item;
+}
+
+export async function markPostOutboxPublished(outboxId: string, chainPostId: string) {
+  const store = await loadStore();
+  const item = store.postOutbox.find((entry) => entry.id === outboxId);
+  if (!item) return null;
+
+  item.status = "published";
+  item.attempts += 1;
+  item.chainPostId = chainPostId;
+  item.publishedAt = new Date().toISOString();
+  item.updatedAt = item.publishedAt;
+
+  const post = store.posts.find((entry) => entry.id === item.postId);
+  if (post) {
+    post.publishStatus = "published";
+    post.chainPostId = chainPostId;
+    post.indexedAt = new Date().toISOString();
   }
 
   await saveStore(store);
-  return {
-    post: {
-      ...post,
-      replyCount: store.replies.filter((reply) => reply.postId === post.id).length,
-      reposts: withRepostCounts([post], store.reposts)[0]?.reposts ?? [],
-    },
-    liked,
-    likes: post.likes.length,
-  };
+  return item;
+}
+
+export async function toggleLike(postId: string, actorAddress: string) {
+  return postsMutex.withLock(async () => {
+    const store = await loadStore();
+    const post = store.posts.find((item) => item.id === postId);
+
+    if (!post) return null;
+
+    const address = normalizeAddress(actorAddress);
+    const index = post.likes.indexOf(address);
+    const liked = index === -1;
+
+    if (liked) {
+      post.likes.push(address);
+    } else {
+      post.likes.splice(index, 1);
+    }
+
+    cacheTimestamp = Date.now();
+    await saveStore(store);
+    return {
+      post: {
+        ...post,
+        replyCount: store.replies.filter((reply) => reply.postId === post.id).length,
+        reposts: withRepostCounts([post], store.reposts)[0]?.reposts ?? [],
+      },
+      liked,
+      likes: post.likes.length,
+    };
+  });
 }
 
 export async function toggleRepost(postId: string, actorAddress: string) {
+  return postsMutex.withLock(async () => {
+    const store = await loadStore();
+    const address = normalizeAddress(actorAddress);
+
+    const existingIndex = store.reposts.findIndex(
+      (item) => item.postId === postId && item.address === address
+    );
+
+    let reposted = false;
+    if (existingIndex >= 0) {
+      store.reposts.splice(existingIndex, 1);
+      reposted = false;
+    } else {
+      store.reposts.push({
+        postId,
+        address,
+        createdAt: new Date().toISOString(),
+      });
+      reposted = true;
+    }
+
+    cacheTimestamp = Date.now();
+    await saveStore(store);
+
+    const post = store.posts.find((item) => item.id === postId);
+    const reposts = store.reposts
+      .filter((item) => item.postId === postId)
+      .map((item) => item.address);
+
+    return {
+      post: post
+        ? {
+            ...post,
+            replyCount: store.replies.filter((reply) => reply.postId === post.id).length,
+            reposts,
+          }
+        : null,
+      reposted,
+      reposts: reposts.length,
+    };
+  });
+}
+
+export async function getRepostRecord(postId: string, actorAddress: string) {
+  const store = await loadStore();
+  const address = normalizeAddress(actorAddress);
+  return (
+    store.reposts.find((item) => item.postId === postId && item.address === address) ?? null
+  );
+}
+
+export async function toggleRepostWithPublicationId(
+  postId: string,
+  actorAddress: string,
+  publicationId?: string
+) {
   const store = await loadStore();
   const address = normalizeAddress(actorAddress);
 
@@ -263,6 +498,7 @@ export async function toggleRepost(postId: string, actorAddress: string) {
       postId,
       address,
       createdAt: new Date().toISOString(),
+      ...(publicationId ? { publicationId } : {}),
     });
     reposted = true;
   }
@@ -323,18 +559,21 @@ export async function editPost(postId: string, actorAddress: string, content: st
 }
 
 export async function deletePost(postId: string, actorAddress: string) {
-  const store = await loadStore();
-  const index = store.posts.findIndex((item) => item.id === postId);
+  return postsMutex.withLock(async () => {
+    const store = await loadStore();
+    const index = store.posts.findIndex((item) => item.id === postId);
 
-  if (index === -1) return { type: "not_found" as const };
-  if (!canMutateOwnedResource(actorAddress, store.posts[index].author.address)) {
-    return { type: "forbidden" as const };
-  }
+    if (index === -1) return { type: "not_found" as const };
+    if (!canMutateOwnedResource(actorAddress, store.posts[index].author.address)) {
+      return { type: "forbidden" as const };
+    }
 
-  store.posts.splice(index, 1);
-  store.replies = store.replies.filter((reply) => reply.postId !== postId);
-  await saveStore(store);
-  return { type: "ok" as const };
+    store.posts.splice(index, 1);
+    store.replies = store.replies.filter((reply) => reply.postId !== postId);
+    cacheTimestamp = Date.now();
+    await saveStore(store);
+    return { type: "ok" as const };
+  });
 }
 
 export async function listReplies({ postId, limit, cursor }: ListRepliesInput) {
@@ -366,27 +605,30 @@ export async function createReply(params: {
   content: string;
   username?: string;
 }) {
-  const store = await loadStore();
+  return postsMutex.withLock(async () => {
+    const store = await loadStore();
 
-  const reply: Reply = {
-    id: crypto.randomUUID(),
-    postId: params.postId,
-    timestamp: new Date().toISOString(),
-    metadata: { content: params.content },
-    author: {
-      address: normalizeAddress(params.address),
-      ...(params.username ? { username: { localName: params.username.slice(0, 32) } } : {}),
-    },
-  };
+    const reply: Reply = {
+      id: randomUUID(),
+      postId: params.postId,
+      timestamp: new Date().toISOString(),
+      metadata: { content: params.content },
+      author: {
+        address: normalizeAddress(params.address),
+        ...(params.username ? { username: { localName: params.username.slice(0, 32) } } : {}),
+      },
+    };
 
-  store.replies.unshift(reply);
-  await saveStore(store);
+    store.replies.unshift(reply);
+    cacheTimestamp = Date.now();
+    await saveStore(store);
 
-  return {
-    type: "ok" as const,
-    reply,
-    replyCount: store.replies.filter((item) => item.postId === params.postId).length,
-  };
+    return {
+      type: "ok" as const,
+      reply,
+      replyCount: store.replies.filter((item) => item.postId === params.postId).length,
+    };
+  });
 }
 
 export async function upsertReply(params: {
@@ -429,41 +671,44 @@ export async function upsertReply(params: {
 }
 
 export async function toggleFollow(params: { follower: string; following: string }) {
-  const store = await loadStore();
-  const follower = normalizeAddress(params.follower);
-  const following = normalizeAddress(params.following);
+  return postsMutex.withLock(async () => {
+    const store = await loadStore();
+    const follower = normalizeAddress(params.follower);
+    const following = normalizeAddress(params.following);
 
-  if (!canToggleFollow(follower, following)) {
-    return { type: "invalid" as const, message: "You cannot follow yourself" };
-  }
+    if (!canToggleFollow(follower, following)) {
+      return { type: "invalid" as const, message: "You cannot follow yourself" };
+    }
 
-  const existingIndex = store.follows.findIndex(
-    (item) => item.follower === follower && item.following === following
-  );
+    const existingIndex = store.follows.findIndex(
+      (item) => item.follower === follower && item.following === following
+    );
 
-  let isFollowing = false;
-  if (existingIndex >= 0) {
-    store.follows.splice(existingIndex, 1);
-    isFollowing = false;
-  } else {
-    store.follows.push({
-      follower,
-      following,
-      createdAt: new Date().toISOString(),
-    });
-    isFollowing = true;
-  }
+    let isFollowing = false;
+    if (existingIndex >= 0) {
+      store.follows.splice(existingIndex, 1);
+      isFollowing = false;
+    } else {
+      store.follows.push({
+        follower,
+        following,
+        createdAt: new Date().toISOString(),
+      });
+      isFollowing = true;
+    }
 
-  await saveStore(store);
-  const followers = store.follows.filter((item) => item.following === following).length;
-  const followingCount = store.follows.filter((item) => item.follower === following).length;
+    cacheTimestamp = Date.now();
+    await saveStore(store);
+    const followers = store.follows.filter((item) => item.following === following).length;
+    const followingCount = store.follows.filter((item) => item.follower === following).length;
 
-  return {
-    type: "ok" as const,
-    isFollowing,
-    followers,
-    following: followingCount,
-  };
+    return {
+      type: "ok" as const,
+      isFollowing,
+      followers,
+      following: followingCount,
+    };
+  });
 }
 
 export async function getFollowStats(targetAddress: string, viewerAddress?: string) {
@@ -481,5 +726,57 @@ export async function getFollowStats(targetAddress: string, viewerAddress?: stri
     followers,
     following,
     isFollowing,
+  };
+}
+
+export async function exportUserOffchainData(address: string) {
+  const store = await loadStore();
+  const normalized = normalizeAddress(address);
+  return {
+    posts: store.posts.filter((post) => post.author.address === normalized),
+    replies: store.replies.filter((reply) => reply.author.address === normalized),
+    followsAsFollower: store.follows.filter((follow) => follow.follower === normalized),
+    followsAsFollowing: store.follows.filter((follow) => follow.following === normalized),
+    reposts: store.reposts.filter((repost) => repost.address === normalized),
+    postOutbox: store.postOutbox.filter((item) => item.address === normalized),
+    likedPostIds: store.posts
+      .filter((post) => (post.likes ?? []).includes(normalized))
+      .map((post) => post.id),
+  };
+}
+
+export async function deleteUserOffchainData(address: string) {
+  const store = await loadStore();
+  const normalized = normalizeAddress(address);
+
+  const before = {
+    posts: store.posts.length,
+    replies: store.replies.length,
+    follows: store.follows.length,
+    reposts: store.reposts.length,
+    postOutbox: store.postOutbox.length,
+  };
+
+  store.posts = store.posts.filter((post) => post.author.address !== normalized);
+  store.replies = store.replies.filter((reply) => reply.author.address !== normalized);
+  store.follows = store.follows.filter(
+    (follow) => follow.follower !== normalized && follow.following !== normalized
+  );
+  store.reposts = store.reposts.filter((repost) => repost.address !== normalized);
+  store.postOutbox = store.postOutbox.filter((item) => item.address !== normalized);
+
+  for (const post of store.posts) {
+    post.likes = (post.likes ?? []).filter((likeAddress) => likeAddress !== normalized);
+    post.reposts = (post.reposts ?? []).filter((repostAddress) => repostAddress !== normalized);
+  }
+
+  await saveStore(store);
+
+  return {
+    deletedPosts: before.posts - store.posts.length,
+    deletedReplies: before.replies - store.replies.length,
+    deletedFollows: before.follows - store.follows.length,
+    deletedReposts: before.reposts - store.reposts.length,
+    deletedPostOutbox: before.postOutbox - store.postOutbox.length,
   };
 }

@@ -2,11 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
+import Image from "next/image";
 import Link from "next/link";
 import { clearDeduplicationCache, deduplicatedRequest } from "@/lib/request-deduplicator";
 import { retryWithBackoff } from "@/lib/retry-backoff";
-import { compressImages, getFileSize, getCompressionRatio } from "@/lib/image-compression";
-import { readBookmarks, toggleBookmarkId } from "@/lib/client/bookmarks";
+import { compressImages } from "@/lib/image-compression";
+import { BOOKMARKS_CHANGED_EVENT, loadBookmarks, readBookmarks, toggleBookmarkId } from "@/lib/client/bookmarks";
+import { hasFunctionalConsent } from "@/lib/client/consent";
+import { useUserSettings } from "@/lib/client/settings";
+import PostMedia from "@/components/PostMedia";
+import { MAX_POST_LENGTH } from "@/lib/posts/content";
 
 type Post = {
   id: string;
@@ -79,7 +84,6 @@ type FeedResponse = {
 };
 
 const PAGE_SIZE = 20;
-const MAX_POST_LENGTH = 280;
 
 function comparePostsDesc(a: Post, b: Post): number {
   if (a.timestamp === b.timestamp) {
@@ -101,6 +105,19 @@ function sanitizeDisplayContent(raw?: string): string {
 
 const URL_SPLIT_REGEX = /(https?:\/\/[^\s]+)/gi;
 
+function setLensAuthHint(value: "1" | null) {
+  if (!hasFunctionalConsent()) return;
+  try {
+    if (value === null) {
+      localStorage.removeItem("lensAuthenticated");
+    } else {
+      localStorage.setItem("lensAuthenticated", value);
+    }
+  } catch {
+    // ignore storage access errors
+  }
+}
+
 function renderContentWithWrappedLinks(raw?: string) {
   const content = sanitizeDisplayContent(raw);
   if (!content) return "";
@@ -116,15 +133,6 @@ function renderContentWithWrappedLinks(raw?: string) {
     }
     return <span key={`txt-${index}`}>{part}</span>;
   });
-}
-
-function getMediaKind(url: string): "video" | "gif" | "image" {
-  if (/[?&]__media=video(\b|&|$)/i.test(url)) return "video";
-  if (/[?&]__media=gif(\b|&|$)/i.test(url)) return "gif";
-  if (/\.(mp4|webm|ogg|mov|m4v)(\?|$)/i.test(url)) return "video";
-  if (/\.(gif)(\?|$)/i.test(url)) return "gif";
-  if (/\/(video|videos)\//i.test(url)) return "video";
-  return "image";
 }
 
 export default function FeedPage() {
@@ -171,6 +179,7 @@ export default function FeedPage() {
   const [replyLoadingByPost, setReplyLoadingByPost] = useState<Record<string, boolean>>({});
   const [bookmarkedPostIds, setBookmarkedPostIds] = useState<string[]>([]);
   const [sidebarSearch, setSidebarSearch] = useState("");
+  const { settings } = useUserSettings();
 
   const { authenticated, user, logout } = usePrivy();
   const { wallets } = useWallets();
@@ -188,22 +197,22 @@ export default function FeedPage() {
   }, [authenticated]);
 
   useEffect(() => {
-    try {
-      if (localStorage.getItem("lensAuthenticated") === "1") {
-        setIsLensAuthenticated(true);
-      }
-    } catch {
-      // ignore storage access errors
-    }
-  }, []);
-
-  useEffect(() => {
-    setBookmarkedPostIds(readBookmarks());
+    let cancelled = false;
+    loadBookmarks()
+      .then((ids) => {
+        if (!cancelled) setBookmarkedPostIds(ids);
+      })
+      .catch(() => {
+        if (!cancelled) setBookmarkedPostIds([]);
+      });
     const onBookmarksChanged = () => setBookmarkedPostIds(readBookmarks());
-    window.addEventListener("chainsocial:bookmarks-changed", onBookmarksChanged);
+    window.addEventListener(BOOKMARKS_CHANGED_EVENT, onBookmarksChanged);
     return () =>
-      window.removeEventListener("chainsocial:bookmarks-changed", onBookmarksChanged);
-  }, []);
+      {
+        cancelled = true;
+        window.removeEventListener(BOOKMARKS_CHANGED_EVENT, onBookmarksChanged);
+      };
+  }, [viewerAddress]);
 
   useEffect(() => {
     // Check for Lens profile after wallet connect
@@ -241,32 +250,18 @@ export default function FeedPage() {
       return;
     }
 
-    console.log("[Lens] Checking session...");
     fetch("/api/lens/session", { credentials: "include", cache: "no-store" })
       .then(res => res.json())
       .then(data => {
-        console.log("[Lens] Session check result:", data);
         if (data.authenticated) {
           setIsLensAuthenticated(true);
-          try {
-            localStorage.setItem("lensAuthenticated", "1");
-          } catch {
-            // ignore storage access errors
-          }
-          console.log("[Lens] Session restored successfully");
+          setLensAuthHint("1");
         } else {
-          try {
-            localStorage.removeItem("lensAuthenticated");
-          } catch {
-            // ignore storage access errors
-          }
+          setLensAuthHint(null);
           setIsLensAuthenticated(false);
-          console.log("[Lens] No valid session found, reason:", data.reason);
         }
       })
-      .catch(err => {
-        console.warn("[Lens] Session check failed:", err);
-      })
+      .catch(() => undefined)
       .finally(() => {
         setCheckingLensSession(false);
       });
@@ -324,7 +319,7 @@ export default function FeedPage() {
       
       // Show Lens fallback warning if we fell back to local store
       if (data.source === "local" && data.lensFallbackError) {
-        console.warn("Using local store instead of Lens. Error:", data.lensFallbackError);
+        setError((current) => current ?? "Using the local fallback feed right now.");
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to load feed";
@@ -398,8 +393,7 @@ export default function FeedPage() {
           method: 'personal_sign',
           params: [challengeText, viewerAddress],
         }) as string;
-      } catch (err) {
-        console.warn("Signing failed:", err);
+      } catch {
         throw new Error("Failed to sign with wallet. Please approve the signing request.");
       }
 
@@ -420,13 +414,8 @@ export default function FeedPage() {
         throw new Error(errorData.error || "Failed to authenticate with Lens");
       }
 
-      console.log("[Lens] Authentication successful!");
       setIsLensAuthenticated(true);
-      try {
-        localStorage.setItem("lensAuthenticated", "1");
-      } catch {
-        // ignore storage access errors
-      }
+      setLensAuthHint("1");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Lens authentication failed";
       setError(message);
@@ -470,12 +459,6 @@ export default function FeedPage() {
         });
 
         // Log compression stats
-        const originalSize = mediaFiles.reduce((sum, f) => sum + f.size, 0);
-        const compressedSize = compressedFiles.reduce((sum, f) => sum + f.size, 0);
-        console.log(
-          `Compressed images: ${getFileSize(originalSize)} → ${getFileSize(compressedSize)} (${getCompressionRatio(originalSize, compressedSize).toFixed(1)}% reduction)`
-        );
-
         const uploadPromises = compressedFiles.map(async (file) => {
           // Dynamically import IPFS helper
           const { uploadToIPFS } = await import("@/lib/ipfs");
@@ -519,26 +502,19 @@ export default function FeedPage() {
           credentials: "include",
         });
         const data = await res.json();
-        console.log("[Post] Response:", res.status, data);
 
         // If we get an auth error, try refreshing the token once
         if ((res.status === 401 || (data.error && data.error.includes("Unauthenticated"))) && retryCount === 0) {
-          console.log("[Post] Auth error, attempting token refresh...");
           const refreshRes = await fetch("/api/lens/refresh", {
             method: "POST",
             credentials: "include",
           });
           if (refreshRes.ok) {
-            console.log("[Post] Token refreshed, retrying post...");
             return postWithRetry(1);
           } else {
             // Refresh failed, user needs to reconnect
             setIsLensAuthenticated(false);
-            try {
-              localStorage.removeItem("lensAuthenticated");
-            } catch {
-              // ignore storage access errors
-            }
+            setLensAuthHint(null);
             throw new Error("Session expired. Please reconnect Lens.");
           }
         }
@@ -556,12 +532,10 @@ export default function FeedPage() {
       const returnedPost = data.post as Post;
       setPosts((prev) => prev.map((post) => (post.id === tempId ? { ...returnedPost, optimistic: false } : post)));
       clearDeduplicationCache();
-      console.log("[Post] Successfully created post:", returnedPost?.id);
       
     } catch (e) {
       setPosts((prev) => prev.filter((post) => post.id !== tempId));
       const message = e instanceof Error ? e.message : "Failed to publish post";
-      console.error("[Post] Failed:", message);
       setError(message);
     } finally {
       setSubmitting(false);
@@ -613,11 +587,7 @@ export default function FeedPage() {
           if (refreshRes.ok) return likeWithRetry(1);
 
           setIsLensAuthenticated(false);
-          try {
-            localStorage.removeItem("lensAuthenticated");
-          } catch {
-            // ignore storage access errors
-          }
+          setLensAuthHint(null);
           throw new Error("Session expired. Please reconnect Lens.");
         }
 
@@ -682,11 +652,7 @@ export default function FeedPage() {
           if (refreshRes.ok) return repostWithRetry(1);
 
           setIsLensAuthenticated(false);
-          try {
-            localStorage.removeItem("lensAuthenticated");
-          } catch {
-            // ignore storage access errors
-          }
+          setLensAuthHint(null);
           throw new Error("Session expired. Please reconnect Lens.");
         }
 
@@ -769,11 +735,7 @@ export default function FeedPage() {
           }
 
           setIsLensAuthenticated(false);
-          try {
-            localStorage.removeItem("lensAuthenticated");
-          } catch {
-            // ignore storage access errors
-          }
+          setLensAuthHint(null);
           throw new Error("Session expired. Please reconnect Lens.");
         }
 
@@ -880,8 +842,15 @@ export default function FeedPage() {
     }
   }
 
-  function handleBookmark(postId: string) {
-    setBookmarkedPostIds(toggleBookmarkId(postId));
+  async function handleBookmark(postId: string) {
+    if (!isAuthReady || !authenticated || !viewerAddress) return;
+    try {
+      const ids = await toggleBookmarkId(postId);
+      setBookmarkedPostIds(ids);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Failed to update bookmark";
+      setError(message);
+    }
   }
 
   const trimmedPost = newPost.trim();
@@ -922,19 +891,26 @@ export default function FeedPage() {
   }, [posts, sidebarSearch]);
 
   return (
-    <div className="min-h-screen bg-black text-white grid grid-cols-12">
-      <aside className="hidden md:flex md:col-span-3 lg:col-span-2 flex-col border-r border-gray-800 py-8 px-6">
-        <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
-          <p className="text-xl font-bold mb-6 text-white">ChainSocial</p>
-          <nav className="mb-8 space-y-1">
+    <div className="min-h-screen bg-black text-white">
+      <div className="relative isolate grid min-h-screen grid-cols-12">
+        <div className="absolute inset-x-0 top-[-18rem] -z-10 flex justify-center blur-3xl">
+          <div className="h-[36rem] w-[36rem] rounded-full bg-cyan-500/16" />
+        </div>
+        <div className="absolute left-[-8rem] top-56 -z-10 h-72 w-72 rounded-full bg-white/5 blur-3xl" />
+        <div className="absolute right-[-10rem] top-80 -z-10 h-80 w-80 rounded-full bg-lime-400/10 blur-3xl" />
+
+      <aside className="hidden md:flex md:col-span-3 lg:col-span-2 flex-col px-5 py-6 lg:px-6">
+        <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-[2rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
+          <p className="mb-6 text-xl font-black uppercase tracking-[-0.04em] text-white">ChainSocial</p>
+          <nav className="mb-8 space-y-2">
             {sidebarItems.map((item) => (
               <Link
                 key={item.label}
                 href={item.href}
-                className={`block rounded-lg px-3 py-2 transition ${
+                className={`block rounded-xl px-4 py-3 text-sm transition ${
                   item.active
-                    ? "bg-gray-900 text-white font-semibold"
-                    : "text-gray-300 hover:bg-gray-900 hover:text-white"
+                    ? "border border-cyan-400/30 bg-cyan-400/10 font-semibold text-white"
+                    : "text-gray-300 hover:bg-white/[0.06] hover:text-white"
                 }`}
               >
                 {item.label}
@@ -945,49 +921,160 @@ export default function FeedPage() {
             <>
               <button
                 onClick={logout}
-                className="rounded-lg px-3 py-2 text-gray-300 hover:bg-gray-900 hover:text-red-400 text-left"
+                className="w-full rounded-xl border border-white/10 px-4 py-3 text-left text-gray-300 transition hover:bg-white/[0.06] hover:text-red-300"
               >
                 Logout
               </button>
             </>
           ) : (
-            <div className="text-gray-400 mt-8">
-              <p className="mb-4">Welcome to ChainSocial!</p>
-              <p className="mb-2">Sign in with your wallet to post and follow others.</p>
-              <div className="mb-2 text-xs text-gray-500">
-                <span role="img" aria-label="wallet">💳</span> Supported wallets: MetaMask, Coinbase, WalletConnect
-              </div>
-              <Link href="https://claim.lens.xyz/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
-                Mint a Lens profile
+            <div className="mt-8 rounded-[1.5rem] border border-white/10 bg-black/30 p-4 text-gray-400">
+              <p className="text-sm font-semibold text-white">Browse publicly. Post when ready.</p>
+              <p className="mt-2 text-sm text-gray-400">
+                You can read the feed without logging in. Connect a wallet only when you want to post, reply, or follow.
+              </p>
+              <Link
+                href="/help"
+                className="mt-4 inline-flex rounded-full border border-white/10 px-4 py-2 text-xs font-semibold text-gray-200 transition hover:bg-white/[0.06]"
+              >
+                How wallet access works
               </Link>
-              <div className="mt-6 text-xs text-gray-500">
-                <p>Viewing public feed. No login required.</p>
-                <p className="mt-2">We use wallet login for secure, passwordless access. Your funds are never at risk.</p>
-                <Link href="/help" className="text-blue-400 hover:underline mt-2 inline-block">How wallet login works</Link>
+              <div className="mt-4 text-xs text-gray-500">
+                Supported wallets include MetaMask, Coinbase Wallet, and WalletConnect-compatible apps.
               </div>
             </div>
           )}
         </div>
       </aside>
 
-      <main className="col-span-12 md:col-span-9 lg:col-span-8 flex justify-center">
-        <div className="w-full max-w-2xl px-6 py-6">
-          <h2 className="text-2xl font-semibold mb-6">Global Feed</h2>
+      <main className="col-span-12 md:col-span-9 lg:col-span-8 flex justify-center px-4 py-6 md:px-6">
+        <div className="w-full max-w-3xl">
+          <section className="animate-fade-up rounded-[2.25rem] border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur sm:p-8">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-2xl">
+                <p className="mb-3 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-[11px] uppercase tracking-[0.28em] text-cyan-200">
+                  Global Feed
+                </p>
+                <h2 className="text-3xl font-black uppercase leading-none tracking-[-0.05em] text-white sm:text-5xl">
+                  The public timeline,
+                  <br />
+                  without the clutter.
+                </h2>
+                <p className="mt-4 max-w-2xl text-sm leading-6 text-gray-300 sm:text-base sm:leading-7">
+                  Read the live conversation, post from your wallet, and keep the useful parts of a social product close at hand.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 sm:max-w-xs">
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                  <p className="text-xl font-bold text-white">{posts.length}</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Loaded</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                  <p className="text-xl font-bold text-white">{bookmarkedPostIds.length}</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Saved</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                  <p className="text-xl font-bold text-white">{authenticated ? "On" : "Off"}</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Access</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="animate-fade-up animate-fade-up-delay-1 mt-4 space-y-4 lg:hidden">
+            <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {sidebarItems.map((item) => (
+                <Link
+                  key={`mobile-${item.label}`}
+                  href={item.href}
+                  className={`shrink-0 rounded-full px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
+                    item.active
+                      ? "border border-cyan-400/30 bg-cyan-400/10 text-white"
+                      : "border border-white/10 bg-white/[0.04] text-gray-300"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-4 backdrop-blur">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-gray-400">Quick Search</p>
+                  <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-gray-500">
+                    Loaded posts
+                  </span>
+                </div>
+                <input
+                  value={sidebarSearch}
+                  onChange={(event) => setSidebarSearch(event.target.value)}
+                  placeholder="Search posts, users, wallets"
+                  className="mb-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white"
+                />
+                {sidebarSearch.trim().length === 0 ? (
+                  <p className="text-xs leading-5 text-gray-500">Search the posts already loaded on this screen.</p>
+                ) : sidebarSearchResults.length === 0 ? (
+                  <p className="text-xs text-gray-500">No matches found.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {sidebarSearchResults.slice(0, 3).map((post) => (
+                      <div key={`mobile-search-${post.id}`} className="rounded-2xl border border-white/10 bg-black/30 p-3">
+                        <div className="mb-1 text-xs font-medium text-gray-200">
+                          {post.author.username?.localName || shortenAddress(post.author.address)}
+                        </div>
+                        <div className="line-clamp-2 whitespace-pre-wrap break-words text-xs leading-5 text-gray-400">
+                          {sanitizeDisplayContent(post.metadata?.content) || "(No text content)"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-4 backdrop-blur">
+                <p className="text-[11px] uppercase tracking-[0.22em] text-gray-400">Session State</p>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-gray-500">Read</p>
+                    <p className="mt-2 text-sm font-medium text-white">Open</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-gray-500">Post</p>
+                    <p className="mt-2 text-sm font-medium text-white">{authenticated ? "Connected" : "Idle"}</p>
+                  </div>
+                </div>
+                <p className="mt-3 text-xs leading-5 text-gray-500">
+                  Browse freely now. Connect only when you want to post, reply, or save.
+                </p>
+              </div>
+            </div>
+          </section>
 
           {isAuthReady && authenticated && (
-            <div className="bg-black pt-2 pb-4 -mx-6 px-6 border-b border-gray-800">
+            <div className="animate-fade-up animate-fade-up-delay-2 mt-6">
               {checkingProfile || checkingLensSession ? (
-                <div className="text-gray-400">Checking Lens profile...</div>
+                <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] px-5 py-4 text-sm text-gray-400 backdrop-blur">
+                  Checking your posting access...
+                </div>
               ) : hasLensProfile ? (
                 isLensAuthenticated ? (
                   <form
                     onSubmit={handlePostSubmit}
-                    className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow"
+                    className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur"
                   >
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">Share an update</p>
+                        <p className="text-xs text-gray-400">Post publicly from your connected account.</p>
+                      </div>
+                      <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-cyan-200">
+                        Live
+                      </span>
+                    </div>
                     <textarea
-                      className="w-full bg-black text-white rounded p-2 mb-2 border border-gray-700"
-                      rows={3}
-                      placeholder="What's happening?"
+                      className="mb-3 w-full rounded-[1.25rem] border border-white/10 bg-black/40 p-4 text-white placeholder:text-gray-500"
+                      rows={4}
+                      placeholder="What feels worth sharing right now?"
                       value={newPost}
                       onChange={(event) => setNewPost(event.target.value)}
                       disabled={submitting || uploadingMedia}
@@ -996,7 +1083,7 @@ export default function FeedPage() {
                       type="file"
                       accept="image/*"
                       multiple
-                      className="block mb-2 text-gray-300"
+                      className="mb-3 block text-sm text-gray-300 file:mr-4 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-xs file:font-semibold file:text-black hover:file:bg-gray-200"
                       onChange={(e) => {
                         const files = Array.from(e.target.files || []);
                         setMediaFiles(files);
@@ -1005,26 +1092,29 @@ export default function FeedPage() {
                       disabled={submitting || uploadingMedia}
                     />
                     {mediaPreview.length > 0 && (
-                      <div className="flex gap-2 mb-2">
+                      <div className="mb-3 flex flex-wrap gap-2">
                         {mediaPreview.map((url, idx) => (
-                          <img
+                          <Image
                             key={idx}
                             src={url}
                             alt="preview"
-                            className="w-16 h-16 object-cover rounded border border-gray-700 inline-block"
+                            width={80}
+                            height={80}
+                            unoptimized
+                            className="h-20 w-20 rounded-2xl border border-white/10 object-cover"
                           />
                         ))}
                       </div>
                     )}
                     <div className="flex justify-between items-center">
                       <span
-                        className={`text-xs ${postTooLong ? "text-red-400" : "text-gray-400"}`}
+                        className={`text-xs ${postTooLong ? "text-red-300" : "text-gray-400"}`}
                       >
                         {remainingChars} chars left
                       </span>
                       <button
                         type="submit"
-                        className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50"
+                        className="rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-gray-200 disabled:opacity-50"
                         disabled={!canSubmit || uploadingMedia}
                       >
                         {submitting || uploadingMedia ? "Posting..." : "Post"}
@@ -1032,27 +1122,29 @@ export default function FeedPage() {
                     </div>
                   </form>
                 ) : (
-                  <div className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow text-center">
-                    <p className="mb-4 text-gray-300">Authenticate with Lens to post</p>
+                  <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-5 text-center shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
+                    <p className="mb-2 text-sm font-semibold text-white">One more step before posting</p>
+                    <p className="mb-4 text-sm text-gray-400">Connect your posting account to publish publicly.</p>
                     <button
                       onClick={handleLensAuth}
                       disabled={authenticatingLens}
-                      className="bg-blue-600 px-6 py-2 rounded text-white hover:bg-blue-700 disabled:opacity-50"
+                      className="rounded-full bg-white px-6 py-2.5 text-sm font-semibold text-black transition hover:bg-gray-200 disabled:opacity-50"
                     >
-                      {authenticatingLens ? "Connecting..." : "Connect Lens"}
+                      {authenticatingLens ? "Connecting..." : "Enable posting"}
                     </button>
                   </div>
                 )
               ) : showMintPrompt ? (
-                <div className="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow text-center">
-                  <p className="mb-4 text-red-400">You need a Lens profile to post.</p>
+                <div className="rounded-[1.75rem] border border-red-400/20 bg-red-500/10 p-5 text-center shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
+                  <p className="mb-2 text-sm font-semibold text-white">Posting isn’t enabled on this account yet</p>
+                  <p className="mb-4 text-sm text-red-100/80">Set up your public profile first, then come back here to post.</p>
                   <a
                     href="https://claim.lens.xyz/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="bg-blue-600 px-4 py-2 rounded text-white inline-block"
+                    className="inline-block rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-gray-200"
                   >
-                    Mint Lens Profile
+                    Set up profile
                   </a>
                 </div>
               ) : null}
@@ -1060,29 +1152,35 @@ export default function FeedPage() {
           )}
 
           {error && (
-            <div className="mb-4 rounded-lg border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-200 flex items-center justify-between gap-2">
+            <div className="mt-6 flex items-center justify-between gap-3 rounded-[1.5rem] border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
               <span>{error}</span>
               <button
                 onClick={() => void fetchPosts({ reset: true })}
-                className="rounded border border-red-700 px-2 py-1 text-xs"
+                className="rounded-full border border-red-300/20 px-3 py-1 text-xs"
               >
                 Retry
               </button>
             </div>
           )}
 
-          {feedStatus === "loading" && <p className="text-gray-400">Loading...</p>}
+          {feedStatus === "loading" && (
+            <div className="mt-6 space-y-5">
+              <FeedSkeletonCard compact={settings.compactFeed} />
+              <FeedSkeletonCard compact={settings.compactFeed} />
+              <FeedSkeletonCard compact={settings.compactFeed} hasMedia />
+            </div>
+          )}
 
           {feedStatus === "error" && (
-            <p className="text-gray-500">Feed unavailable right now.</p>
+            <p className="mt-6 text-sm text-gray-500">Feed unavailable right now.</p>
           )}
 
           {feedStatus === "ready" && posts.length === 0 && (
-            <p className="text-gray-500">No posts found.</p>
+            <p className="mt-6 text-sm text-gray-500">No posts found.</p>
           )}
 
-          <div className="space-y-4">
-            {posts.map((post) => {
+          <div className="mt-6 space-y-5">
+            {posts.map((post, index) => {
               const liked = (post.likes ?? []).includes(viewerAddress);
               const reposted = (post.reposts ?? []).includes(viewerAddress);
               const bookmarked = bookmarkedPostIds.includes(post.id);
@@ -1090,48 +1188,78 @@ export default function FeedPage() {
               const isEditing = editingPostId === post.id;
               const repliesOpen = !!expandedReplies[post.id];
               const replies = repliesByPost[post.id] ?? [];
+              const hasMedia = (post.metadata?.media?.length ?? 0) > 0;
+              const rawUsername = post.author.username?.localName?.trim() ?? "";
+              const hasDistinctUsername =
+                rawUsername.length > 0 &&
+                rawUsername.toLowerCase() !== post.author.address.toLowerCase();
+              const primaryAuthorLabel = hasDistinctUsername
+                ? rawUsername
+                : post.author.address;
+              const secondaryAuthorLabel = hasDistinctUsername
+                ? post.author.address
+                : "";
+              const timestamp = new Date(post.timestamp);
+              const timestampLabel = Number.isNaN(timestamp.getTime())
+                ? post.timestamp
+                : timestamp.toLocaleString();
+              const postKindLabel = hasMedia ? "Media post" : "Text post";
 
               return (
-                <div
+                <article
                   key={post.id}
-                  className="border border-gray-700 bg-gray-900 rounded-2xl p-4 flex gap-4 transition-shadow hover:shadow-lg hover:bg-gray-800 shadow-sm"
+                  className={`animate-fade-up rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.07] via-white/[0.04] to-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] transition duration-200 hover:border-white/15 hover:bg-white/[0.07] ${
+                    settings.compactFeed ? "p-4" : "p-5"
+                  }`}
+                  style={{ animationDelay: `${Math.min(index, 5) * 60}ms` }}
                 >
-                  <Link href={`/profile/${post.author.address}`} className="shrink-0">
-                    {/* Profile picture removed, only mini avatar will show next to username */}
-                  </Link>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <div className="flex items-center gap-2">
-                        <img
+                  <div className="min-w-0">
+                    <div className="mb-4 flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <Image
                           src={`https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
                           alt="cute avatar"
-                          className="w-6 h-6 rounded-full border border-gray-700 bg-white mr-1 inline-block align-middle"
+                          width={40}
+                          height={40}
+                          unoptimized
+                          className="mt-0.5 h-10 w-10 rounded-full border border-white/10 bg-white object-cover shadow-sm"
                         />
-                        <Link
-                          href={`/profile/${post.author.address}`}
-                          className="font-semibold hover:underline inline-block align-middle"
-                        >
-                          {post.author.username?.localName ||
-                            post.author.address}
-                        </Link>
-                        <span className="text-xs text-gray-500">
-                          {post.author.address}
-                        </span>
-                        {post.optimistic && (
-                          <span className="text-xs text-amber-400">Sending...</span>
-                        )}
+                        <div className="min-w-0">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <Link
+                              href={`/profile/${post.author.address}`}
+                              className="inline-block max-w-[18rem] break-all text-[15px] font-semibold text-white hover:underline"
+                            >
+                              {primaryAuthorLabel}
+                            </Link>
+                            <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">
+                              {postKindLabel}
+                            </span>
+                            {post.optimistic && (
+                              <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-amber-200">
+                                Sending
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-xs text-gray-500">
+                            {secondaryAuthorLabel && (
+                              <span className="max-w-[18rem] break-all">{secondaryAuthorLabel}</span>
+                            )}
+                            <span>{timestampLabel}</span>
+                          </div>
+                        </div>
                       </div>
                       {isOwner && !post.optimistic && !isEditing && (
                         <div className="flex items-center gap-2 text-xs">
                           <button
                             onClick={() => beginEdit(post)}
-                            className="text-blue-400 hover:underline"
+                            className="rounded-full border border-white/10 px-3 py-1.5 text-gray-300 transition hover:bg-white/[0.06] hover:text-white"
                           >
                             Edit
                           </button>
                           <button
                             onClick={() => void removePost(post.id)}
-                            className="text-red-400 hover:underline"
+                            className="rounded-full border border-red-400/20 px-3 py-1.5 text-red-300 transition hover:bg-red-500/10"
                           >
                             Delete
                           </button>
@@ -1142,7 +1270,7 @@ export default function FeedPage() {
                     {isEditing ? (
                       <div className="space-y-2">
                         <textarea
-                          className="w-full bg-black text-white rounded p-2 border border-gray-700"
+                          className="w-full rounded-[1.25rem] border border-white/10 bg-black/40 p-3 text-white"
                           rows={3}
                           value={editingContent}
                           onChange={(event) => setEditingContent(event.target.value)}
@@ -1151,7 +1279,7 @@ export default function FeedPage() {
                           <button
                             onClick={() => void saveEdit(post.id)}
                             disabled={editingLoading}
-                            className="bg-blue-600 px-3 py-1 rounded text-sm disabled:opacity-50"
+                            className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black disabled:opacity-50"
                           >
                             Save
                           </button>
@@ -1160,7 +1288,7 @@ export default function FeedPage() {
                               setEditingPostId(null);
                               setEditingContent("");
                             }}
-                            className="border border-gray-600 px-3 py-1 rounded text-sm"
+                            className="rounded-full border border-white/10 px-4 py-2 text-sm text-gray-300"
                           >
                             Cancel
                           </button>
@@ -1168,109 +1296,73 @@ export default function FeedPage() {
                       </div>
                     ) : (
                       <>
-                          <div className="mb-2 whitespace-pre-wrap break-words">
-                            {renderContentWithWrappedLinks(post.metadata?.content)}
-                          </div>
+                        <div
+                          className={`mb-4 whitespace-pre-wrap break-words text-gray-100 ${
+                            settings.compactFeed ? "text-sm leading-6" : "text-[15px] leading-7"
+                          }`}
+                        >
+                          {renderContentWithWrappedLinks(post.metadata?.content)}
+                        </div>
                         {post.metadata?.media && post.metadata.media.length > 0 && (
-                          <div
-                            className={`mb-2 ${
-                              post.metadata.media.length === 1
-                                ? "max-w-xl"
-                                : "grid grid-cols-2 gap-2"
-                            }`}
-                          >
-                            {post.metadata.media.map((url, idx) => {
-                              const mediaKind = getMediaKind(url);
-                              const isSingle = post.metadata!.media!.length === 1;
-                              const frameClass = isSingle
-                                ? "overflow-hidden rounded-xl border border-gray-700 bg-black"
-                                : "overflow-hidden rounded-xl border border-gray-700 bg-black aspect-square";
-
-                              if (mediaKind === "video") {
-                                return (
-                                  <div key={idx} className={frameClass}>
-                                    <video
-                                      src={url}
-                                      controls
-                                      className={isSingle ? "w-full max-h-96 object-contain" : "w-full h-full object-cover"}
-                                    />
-                                  </div>
-                                );
-                              }
-                              return (
-                                <div key={idx} className={frameClass}>
-                                  <img
-                                    src={url}
-                                    alt="media"
-                                    className={
-                                      mediaKind === "gif"
-                                        ? isSingle
-                                          ? "w-full max-h-96 object-contain"
-                                          : "w-full h-full object-contain"
-                                        : isSingle
-                                          ? "w-full max-h-96 object-cover"
-                                          : "w-full h-full object-cover"
-                                    }
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
+                          <PostMedia media={post.metadata.media} settings={settings} />
                         )}
                       </>
                     )}
 
-                    <div className="flex items-center gap-4 mt-2">
+                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/10 pt-4">
                       <button
-                        className={`flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-800 transition-colors ${liked ? "text-pink-500" : "text-gray-400"}`}
+                        className={`flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition-colors ${liked ? "bg-pink-500/10 text-pink-300" : "border border-white/10 text-gray-300 hover:bg-white/[0.06]"}`}
                         onClick={() => void handleLike(post.id)}
                         disabled={!isAuthReady || !authenticated || post.optimistic}
                         aria-label={liked ? "Unlike" : "Like"}
                       >
-                        <span>Like</span>
+                        <span className="text-xs uppercase tracking-[0.18em]">Like</span>
+                        <span className="text-xs text-current/80">/</span>
                         <span>{post.likes?.length || 0}</span>
                       </button>
 
                       <button
-                        className={`flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-800 transition-colors ${reposted ? "text-green-400" : "text-gray-400"}`}
+                        className={`flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition-colors ${reposted ? "bg-lime-400/10 text-lime-200" : "border border-white/10 text-gray-300 hover:bg-white/[0.06]"}`}
                         onClick={() => void handleRepost(post.id)}
                         disabled={!isAuthReady || !authenticated || post.optimistic}
                         aria-label={reposted ? "Undo repost" : "Repost"}
                       >
-                        <span>{reposted ? "Reposted" : "Repost"}</span>
+                        <span className="text-xs uppercase tracking-[0.18em]">{reposted ? "Reposted" : "Repost"}</span>
+                        <span className="text-xs text-current/80">/</span>
                         <span>{post.reposts?.length || 0}</span>
                       </button>
 
                       <button
-                        className="flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-800 text-gray-400"
+                        className="flex items-center gap-2 rounded-full border border-white/10 px-3.5 py-2 text-sm text-gray-300 transition hover:bg-white/[0.06]"
                         onClick={() => toggleReplies(post.id)}
                         disabled={post.optimistic}
                       >
-                        <span>{repliesOpen ? "Hide Replies" : "Replies"}</span>
+                        <span className="text-xs uppercase tracking-[0.18em]">
+                          {repliesOpen ? "Hide Replies" : "Replies"}
+                        </span>
+                        <span className="text-xs text-current/80">/</span>
                         <span>{post.replyCount ?? 0}</span>
                       </button>
 
                       <button
-                        className={`flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-800 transition-colors ${
-                          bookmarked ? "text-yellow-400" : "text-gray-400"
+                        className={`flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition-colors ${
+                          bookmarked ? "bg-yellow-400/10 text-yellow-200" : "border border-white/10 text-gray-300 hover:bg-white/[0.06]"
                         }`}
-                        onClick={() => handleBookmark(post.id)}
-                        disabled={post.optimistic}
+                        onClick={() => void handleBookmark(post.id)}
+                        disabled={!isAuthReady || !authenticated || post.optimistic}
                       >
-                        <span>{bookmarked ? "Bookmarked" : "Bookmark"}</span>
+                        <span className="text-xs uppercase tracking-[0.18em]">
+                          {bookmarked ? "Saved" : "Save"}
+                        </span>
                       </button>
-
-                      <span className="text-xs text-gray-500">
-                        {new Date(post.timestamp).toLocaleString()}
-                      </span>
                     </div>
 
                     {repliesOpen && (
-                      <div className="mt-3 border-t border-gray-700 pt-3 space-y-3">
+                      <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
                         {isAuthReady && authenticated && (
                           <div className="space-y-2">
                             <textarea
-                              className="w-full bg-black text-white rounded p-2 border border-gray-700 text-sm"
+                              className="w-full rounded-[1.25rem] border border-white/10 bg-black/40 p-3 text-sm text-white"
                               rows={2}
                               placeholder="Write a reply"
                               value={replyDraftByPost[post.id] ?? ""}
@@ -1284,7 +1376,7 @@ export default function FeedPage() {
                             <button
                               onClick={() => void submitReply(post.id)}
                               disabled={replyLoadingByPost[post.id]}
-                              className="bg-blue-600 px-3 py-1 rounded text-xs disabled:opacity-50"
+                              className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-black disabled:opacity-50"
                             >
                               Reply
                             </button>
@@ -1296,8 +1388,8 @@ export default function FeedPage() {
                         )}
 
                         {replies.map((reply) => (
-                          <div key={reply.id} className="rounded-lg bg-black/40 border border-gray-800 p-3">
-                            <div className="flex items-center gap-2 mb-1">
+                          <div key={reply.id} className="rounded-[1.25rem] border border-white/10 bg-black/30 p-3">
+                            <div className="mb-1 flex items-center gap-2">
                               <Link
                                 href={`/profile/${reply.author.address}`}
                                 className="text-sm font-medium hover:underline"
@@ -1320,18 +1412,18 @@ export default function FeedPage() {
                       </div>
                     )}
                   </div>
-                </div>
+                </article>
               );
             })}
           </div>
 
           {nextCursor && (
-            <div className="flex flex-col items-center mt-8 gap-3">
+            <div className="animate-fade-up animate-fade-up-delay-3 mt-8 flex flex-col items-center gap-3">
               <div ref={loadMoreAnchorRef} className="h-1 w-full" />
               <button
                 onClick={() => void fetchPosts({ reset: false })}
                 disabled={loadingMore}
-                className="px-4 py-2 bg-gray-800 rounded disabled:opacity-50"
+                className="rounded-full border border-white/10 bg-white/[0.04] px-5 py-2.5 text-sm text-white transition hover:bg-white/[0.06] disabled:opacity-50"
               >
                 {loadingMore ? "Loading..." : "Load more"}
               </button>
@@ -1340,49 +1432,162 @@ export default function FeedPage() {
         </div>
       </main>
 
-      <aside className="hidden lg:flex lg:col-span-2 flex-col border-l border-gray-800 py-8 px-6">
-        <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
+      <aside className="hidden lg:flex lg:col-span-2 flex-col px-5 py-6 lg:px-6">
+        <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-[2rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
+          <div className="mb-6 rounded-[1.6rem] border border-cyan-400/20 bg-gradient-to-br from-cyan-400/10 via-white/[0.03] to-lime-300/10 p-4">
+            <p className="text-[11px] uppercase tracking-[0.24em] text-cyan-200">Feed Companion</p>
+            <h3 className="mt-2 text-xl font-semibold text-white">Read the room before you post.</h3>
+            <p className="mt-2 text-sm leading-6 text-gray-300">
+              This rail keeps the feed readable: search what is already loaded, track the current state of your session, and jump to the policies behind the product.
+            </p>
+          </div>
+
           <div className="mb-8">
-            <h3 className="font-bold mb-3">Search</h3>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-gray-300">Search</h3>
+              <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">
+                Loaded only
+              </span>
+            </div>
             <input
               value={sidebarSearch}
               onChange={(event) => setSidebarSearch(event.target.value)}
               placeholder="Search posts, users, wallets"
-              className="mb-3 w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white"
+              className="mb-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white"
             />
             {sidebarSearch.trim().length === 0 && (
-              <p className="text-xs text-gray-500">Type to search in loaded feed posts.</p>
+              <p className="text-xs leading-5 text-gray-500">Type to scan the posts currently loaded into this feed view.</p>
             )}
             {sidebarSearch.trim().length > 0 && sidebarSearchResults.length === 0 && (
               <p className="text-xs text-gray-500">No matches found.</p>
             )}
             <div className="space-y-2">
               {sidebarSearchResults.map((post) => (
-                <div key={post.id} className="rounded-lg border border-gray-800 bg-gray-900 p-2">
-                  <div className="mb-1 text-xs text-gray-300">
-                    {post.author.username?.localName || shortenAddress(post.author.address)}
+                <div key={post.id} className="rounded-2xl border border-white/10 bg-black/30 p-3 transition hover:bg-white/[0.05]">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <div className="text-xs font-medium text-gray-200">
+                      {post.author.username?.localName || shortenAddress(post.author.address)}
+                    </div>
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-gray-500">
+                      Match
+                    </div>
                   </div>
-                  <div className="line-clamp-3 text-xs text-gray-400 whitespace-pre-wrap break-words">
+                  <div className="line-clamp-3 whitespace-pre-wrap break-words text-xs leading-5 text-gray-400">
                     {sanitizeDisplayContent(post.metadata?.content) || "(No text content)"}
                   </div>
                 </div>
               ))}
             </div>
           </div>
-          <div>
-            <h3 className="font-bold mb-4">Trends</h3>
-            <ul className="space-y-2 text-gray-400">
-              <li>#Web3</li>
-              <li>#DeFi</li>
-              <li>#Crypto</li>
-            </ul>
+
+          <div className="mb-8">
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-gray-300">Session State</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Read Access</p>
+                <p className="mt-2 text-sm font-medium text-white">Open</p>
+                <p className="mt-1 text-xs leading-5 text-gray-400">Anyone can browse the public feed.</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Post Access</p>
+                <p className="mt-2 text-sm font-medium text-white">
+                  {authenticated ? "Connected" : "Idle"}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-gray-400">
+                  {authenticated
+                    ? "Your account can interact where posting access is enabled."
+                    : "Connect a wallet when you want to post, reply, or save."}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-8">
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-gray-300">What Makes This Feed Better</h3>
+            <div className="space-y-3 text-sm text-gray-300">
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <p className="font-medium text-white">Open by default</p>
+                <p className="mt-2 text-xs leading-5 text-gray-400">
+                  Public reading stays available even if you never connect a wallet.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <p className="font-medium text-white">Useful when signed in</p>
+                <p className="mt-2 text-xs leading-5 text-gray-400">
+                  Bookmarks, messages, notifications, and preferences become durable once you authenticate.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <p className="font-medium text-white">Clear product boundaries</p>
+                <p className="mt-2 text-xs leading-5 text-gray-400">
+                  The product explains what is public and what is app-managed instead of hiding that behind vague promises.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-white/10 pt-4 text-xs text-gray-400">
+            <div className="flex flex-col gap-2">
+              <Link href="/legal/privacy" className="hover:text-white">Privacy</Link>
+              <Link href="/legal/terms" className="hover:text-white">Terms</Link>
+              <Link href="/legal/cookies" className="hover:text-white">Cookies</Link>
+            </div>
           </div>
         </div>
       </aside>
+      </div>
     </div>
   );
 }
 
 function shortenAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function FeedSkeletonCard({
+  compact,
+  hasMedia = false,
+}: {
+  compact: boolean;
+  hasMedia?: boolean;
+}) {
+  return (
+    <div
+      className={`animate-pulse rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.07] via-white/[0.04] to-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] ${
+        compact ? "p-4" : "p-5"
+      }`}
+      aria-hidden="true"
+    >
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="h-10 w-10 rounded-full bg-white/10" />
+          <div className="min-w-0 space-y-2">
+            <div className="h-4 w-36 rounded-full bg-white/10" />
+            <div className="h-3 w-48 rounded-full bg-white/5" />
+          </div>
+        </div>
+        <div className="h-8 w-20 rounded-full bg-white/5" />
+      </div>
+
+      <div className="space-y-2">
+        <div className="h-4 w-full rounded-full bg-white/10" />
+        <div className="h-4 w-[88%] rounded-full bg-white/10" />
+        <div className="h-4 w-[56%] rounded-full bg-white/5" />
+      </div>
+
+      {hasMedia && (
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="aspect-square rounded-[1.4rem] bg-white/10" />
+          <div className="aspect-square rounded-[1.4rem] bg-white/5" />
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/10 pt-4">
+        <div className="h-10 w-24 rounded-full bg-white/10" />
+        <div className="h-10 w-28 rounded-full bg-white/5" />
+        <div className="h-10 w-28 rounded-full bg-white/10" />
+        <div className="h-10 w-20 rounded-full bg-white/5" />
+      </div>
+    </div>
+  );
 }

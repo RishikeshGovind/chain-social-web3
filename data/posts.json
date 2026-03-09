@@ -1,6 +1,183 @@
 {
   "posts": [
     {
+      "id": "0xfab53083763e1bf84f14d111fc79d95101da830d184edccc40741d7a8d187e5f",
+      "timestamp": "2026-03-06T17:59:51.754Z",
+      "chainPostId": "0xfab53083763e1bf84f14d111fc79d95101da830d184edccc40741d7a8d187e5f",
+      "publishStatus": "published",
+      "indexedAt": "2026-03-06T17:59:51.755Z",
+      "metadata": {
+        "content": "The NYSE-OKX deal puts a legacy giant right at the heart of the digital asset world. The bridge between Wall Street and Web3 just got stronger."
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x6ce7f93401f72851247cc199c9a480776a9a45f5b73a3f825143375d95ff48d5",
+      "timestamp": "2026-03-06T17:39:39.232Z",
+      "chainPostId": "0x6ce7f93401f72851247cc199c9a480776a9a45f5b73a3f825143375d95ff48d5",
+      "publishStatus": "published",
+      "indexedAt": "2026-03-06T17:39:39.233Z",
+      "metadata": {
+        "content": "Intercontinental Exchange (ICE), the owner of the NYSE, acquired a stake in the crypto exchange OKX at a $25 billion valuation"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0xe9c48df1258bb5b9b1286480718865b0cfa6f6a2d4387a261cb96ae3ade481b6",
+      "timestamp": "2026-03-05T18:20:05.558Z",
+      "chainPostId": "0xe9c48df1258bb5b9b1286480718865b0cfa6f6a2d4387a261cb96ae3ade481b6",
+      "publishStatus": "published",
+      "indexedAt": "2026-03-05T18:20:05.558Z",
+      "metadata": {
+        "content": "gm"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x97647990469df71efb4c793c991f25fa8956f379eb224a65195d33511a9410c9",
+      "timestamp": "2026-03-05T17:14:13.552Z",
+      "metadata": {
+        "content": "The Neo uses a mobile processor (comparable to the iPhone 16 Pro) rather than the high-end M5 chip, targeting the Chromebook and budget Windows PC markets"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x5029602a5aaea28bd611c7c36afc47b12de1ebe8c71d40fc89b3ff4fea149506",
+      "timestamp": "2026-03-05T17:13:53.776Z",
+      "metadata": {
+        "content": "Apple unveiled the MacBook Neo, starting at $599—roughly $400 cheaper than its standard entry-level laptops"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x01c88691e760031c2a01211e60a5495102f36235cb886feaa891d81dcf1a7d01",
+      "timestamp": "2026-03-04T18:10:27.940Z",
+      "metadata": {
+        "content": "Experts suggest that while AI will automate many tasks, it is currently \"augmenting\" rather than \"replacing\" most human roles, though entry-level developer positions are seeing a significant impact"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x6b79e59611e15afc14c5661090abe413bc91503c7cef3516956ceb07e4be79a7",
+      "timestamp": "2026-03-04T17:34:54.644Z",
+      "metadata": {
+        "content": "Scientific knowledge is disseminated through scientific articles, where data and metadata are described in natural language, rendering comparative analysis of experiments very difficult."
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0xc630783550f8f6fe8aedbe2ccde98d2fe096bbd62d27e5e158595236aafba5e1",
+      "timestamp": "2026-03-04T17:34:14.802Z",
+      "metadata": {
+        "content": "With computational power constantly accelerating, we find that bottlenecks for analyzing scientific data lie not in the availability of said power, but in the availability of the data for analysis."
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0xc078babe965bf8e07a394a6741d7bf3db77106a2bd468387a1017ee6c882b3ca",
+      "timestamp": "2026-03-04T15:15:25.246Z",
+      "metadata": {
+        "content": "The NASDAQ 100 and S&P 500 both dropped nearly 2% as investors pivoted to a \"risk-off\" mentality"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0xc280de2295e825e0b18286a2f20ff7369eff1e362afbff9cbf54002cced791b0",
+      "timestamp": "2026-03-04T15:15:13.006Z",
+      "metadata": {
+        "content": "Rising energy prices have led markets to anticipate that the Federal Reserve will be unable to cut interest rates in an inflationary environment"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x9ef683d8d14123d6acb3c0827d2217187630be6a2446d8cd371370d70221a679",
+      "timestamp": "2026-03-04T15:14:45.802Z",
+      "metadata": {
+        "content": "Crude oil experienced its biggest move since 2022, with WTI hitting $77 and Brent surging to $85 due to threats against energy infrastructure in the Middle East and blockages in the Strait of Hormuz"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0xc4f3cb8354fafa64a925260d704bd8985e57229ff00e61cd13eb16399d6b8976",
+      "timestamp": "2026-03-04T14:50:13.510Z",
+      "metadata": {
+        "content": "The NASDAQ 100 and S&P 500 both dropped nearly 2% as investors pivoted to a \"risk-off\" mentality"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "0x2287a47e931bbaf9c27400bde021312c72ae171f8a68fcf543f0ce74ce67b35b",
+      "timestamp": "2026-03-04T14:45:36.643Z",
+      "metadata": {
+        "content": "The NASDAQ 100 and S&P 500 both dropped nearly 2% as investors pivoted to a \"risk-off\" mentality"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
+      "id": "4bb5247d-4403-4b10-8145-ffe5268b8acc",
+      "timestamp": "2026-03-03T17:32:28.361Z",
+      "metadata": {
+        "content": "gm"
+      },
+      "author": {
+        "address": "0x0aa7bea8fd31767c5fd2f1aceae943d656beb2cd"
+      },
+      "likes": [],
+      "reposts": []
+    },
+    {
       "id": "b3b2786e-c03d-4bcd-b1f0-4f8adf5b8807",
       "timestamp": "2026-02-27T06:03:54.049Z",
       "metadata": {
@@ -35,7 +212,10 @@
         "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0"
       },
       "likes": [],
-      "reposts": []
+      "reposts": [],
+      "publishStatus": "published",
+      "chainPostId": "0x4e0c8c917e7066b902a9bd88cbbfe78079984b2b2a82c3f4b98776b03b33aef9",
+      "indexedAt": "2026-03-05T18:15:35.115Z"
     },
     {
       "id": "0109fd7c-4a82-4e5e-8dc0-b1658212100b",
@@ -48,7 +228,10 @@
         "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0"
       },
       "likes": [],
-      "reposts": []
+      "reposts": [],
+      "publishStatus": "published",
+      "chainPostId": "0x34590f806889788b3b2af2a97e8e0c6181249d30d453b4a052f6d5d29c4f4295",
+      "indexedAt": "2026-03-05T18:15:33.388Z"
     },
     {
       "id": "5cf66346-ce71-42db-a43f-352c250676c1",
@@ -61,7 +244,10 @@
         "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0"
       },
       "likes": [],
-      "reposts": []
+      "reposts": [],
+      "publishStatus": "published",
+      "chainPostId": "0xe6a590f8108a3b451edf923bc59bc55746526e5f2b53ebaafa3b76437d5d4780",
+      "indexedAt": "2026-03-05T18:15:17.914Z"
     },
     {
       "id": "04eead93-95a2-429f-baa0-c0174cee4908",
@@ -281,6 +467,47 @@
       "postId": "26572576482456547749988636803540499062398469670936780873386806138919887804892",
       "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0",
       "createdAt": "2026-02-27T18:26:24.938Z"
+    }
+  ],
+  "postOutbox": [
+    {
+      "id": "a439e26b-412b-4d87-a6ea-2afd2d3ea607",
+      "postId": "00173d7c-adbc-4f35-8a07-4aa9c84f2e18",
+      "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0",
+      "content": "hi",
+      "media": [],
+      "status": "published",
+      "attempts": 1,
+      "createdAt": "2026-03-05T18:15:14.637Z",
+      "updatedAt": "2026-03-05T18:15:35.115Z",
+      "chainPostId": "0x4e0c8c917e7066b902a9bd88cbbfe78079984b2b2a82c3f4b98776b03b33aef9",
+      "publishedAt": "2026-03-05T18:15:35.115Z"
+    },
+    {
+      "id": "192edeb1-82f6-4d2a-9f82-8afa4e8ed068",
+      "postId": "0109fd7c-4a82-4e5e-8dc0-b1658212100b",
+      "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0",
+      "content": "hi",
+      "media": [],
+      "status": "published",
+      "attempts": 1,
+      "createdAt": "2026-03-05T18:15:14.637Z",
+      "updatedAt": "2026-03-05T18:15:33.388Z",
+      "chainPostId": "0x34590f806889788b3b2af2a97e8e0c6181249d30d453b4a052f6d5d29c4f4295",
+      "publishedAt": "2026-03-05T18:15:33.388Z"
+    },
+    {
+      "id": "8606c0aa-5625-407b-9ef9-c2b274c30abd",
+      "postId": "5cf66346-ce71-42db-a43f-352c250676c1",
+      "address": "0x597cb970ad8ba25daf3f903a3bd18bfa9aed03c0",
+      "content": "hi",
+      "media": [],
+      "status": "published",
+      "attempts": 1,
+      "createdAt": "2026-03-05T18:15:14.637Z",
+      "updatedAt": "2026-03-05T18:15:17.914Z",
+      "chainPostId": "0xe6a590f8108a3b451edf923bc59bc55746526e5f2b53ebaafa3b76437d5d4780",
+      "publishedAt": "2026-03-05T18:15:17.914Z"
     }
   ]
 }

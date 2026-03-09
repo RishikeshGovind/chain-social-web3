@@ -3,33 +3,31 @@
 import { NextResponse } from "next/server";
 import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
 import { isValidAddress, normalizeAddress } from "@/lib/posts/content";
-
-// In-memory user profile store (resets on server restart)
-const profiles: Record<
-  string,
-  {
-    displayName?: string;
-    bio?: string;
-    location?: string;
-    website?: string;
-    coverImage?: string;
-    avatar?: string;
-  }
-> = {};
+import { getProfile, setProfile } from "@/lib/profiles/store";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const address = searchParams.get("address");
-  if (address) {
-    return NextResponse.json({ profile: profiles[normalizeAddress(address)] || {} });
+  if (!address) {
+    return NextResponse.json({ error: "address query param is required" }, { status: 400 });
   }
-  return NextResponse.json({ profiles });
+  if (!isValidAddress(address)) {
+    return NextResponse.json({ error: "Invalid address" }, { status: 400 });
+  }
+  const profile = await getProfile(address);
+  return NextResponse.json({ profile });
 }
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const actorAddress = await getActorAddressFromLensCookie();
+
+    if (!actorAddress || !isValidAddress(actorAddress)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const primaryAddress = normalizeAddress(actorAddress);
     const requestedAddress =
       typeof body?.address === "string" && isValidAddress(body.address)
         ? normalizeAddress(body.address)
@@ -39,45 +37,39 @@ export async function POST(req: Request) {
         ? normalizeAddress(body.lensAccountAddress)
         : null;
 
-    if (!actorAddress && !requestedAddress) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (requestedAddress && requestedAddress !== primaryAddress) {
+      return NextResponse.json(
+        { error: "You can only update your own profile" },
+        { status: 403 }
+      );
     }
 
-    const primaryAddress = actorAddress
-      ? normalizeAddress(actorAddress)
-      : (requestedAddress as string);
     const aliases = new Set<string>([primaryAddress]);
-    if (requestedAddress) aliases.add(requestedAddress);
-    if (requestedLensAccount) aliases.add(requestedLensAccount);
+    if (requestedLensAccount === primaryAddress) {
+      aliases.add(requestedLensAccount);
+    }
 
-    const nextProfile = {
-      displayName:
-        typeof body?.displayName === "string"
-          ? body.displayName
-          : profiles[primaryAddress]?.displayName || "",
-      bio: typeof body?.bio === "string" ? body.bio : profiles[primaryAddress]?.bio || "",
-      location:
-        typeof body?.location === "string"
-          ? body.location
-          : profiles[primaryAddress]?.location || "",
-      website:
-        typeof body?.website === "string"
-          ? body.website
-          : profiles[primaryAddress]?.website || "",
-      coverImage:
-        typeof body?.coverImage === "string"
-          ? body.coverImage
-          : profiles[primaryAddress]?.coverImage || "",
-      avatar:
-        typeof body?.avatar === "string"
-          ? body.avatar
-          : profiles[primaryAddress]?.avatar || "",
+    const cleanText = (value: unknown, maxLen: number) =>
+      typeof value === "string" ? value.trim().slice(0, maxLen) : "";
+    const cleanUrl = (value: unknown, maxLen: number) => {
+      if (typeof value !== "string") return "";
+      const candidate = value.trim().slice(0, maxLen);
+      if (!candidate) return "";
+      if (/^https?:\/\//i.test(candidate)) return candidate;
+      if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(candidate)) return `https://${candidate}`;
+      return "";
     };
 
-    // Keep profile reachable by both wallet and Lens-account routes.
-    for (const key of aliases) {
-      profiles[key] = nextProfile;
-    }
+    const nextProfile = {
+      displayName: cleanText(body?.displayName, 64),
+      bio: cleanText(body?.bio, 280),
+      location: cleanText(body?.location, 64),
+      website: cleanUrl(body?.website, 256),
+      coverImage: cleanUrl(body?.coverImage, 512),
+      avatar: cleanUrl(body?.avatar, 512),
+    };
+
+    await setProfile(Array.from(aliases), nextProfile);
 
     return NextResponse.json({ success: true, profile: nextProfile });
   } catch (error) {

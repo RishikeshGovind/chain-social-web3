@@ -2,52 +2,48 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { usePrivy } from "@privy-io/react-auth";
 import AppShell from "@/components/AppShell";
-
-type UserSettings = {
-  compactFeed: boolean;
-  autoplayVideos: boolean;
-  hideSensitiveMedia: boolean;
-};
-
-const STORAGE_KEY = "chainsocial:settings";
-
-const DEFAULT_SETTINGS: UserSettings = {
-  compactFeed: false,
-  autoplayVideos: true,
-  hideSensitiveMedia: false,
-};
-
-function readSettings(): UserSettings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
-    const parsed = JSON.parse(raw) as Partial<UserSettings>;
-    return {
-      compactFeed: !!parsed.compactFeed,
-      autoplayVideos: parsed.autoplayVideos !== false,
-      hideSensitiveMedia: !!parsed.hideSensitiveMedia,
-    };
-  } catch {
-    return DEFAULT_SETTINGS;
-  }
-}
-
-function writeSettings(settings: UserSettings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-}
+import {
+  readUserSettings,
+  type UserSettings,
+  updateUserSettings,
+  useUserSettings,
+  USER_SETTINGS_CHANGED_EVENT,
+} from "@/lib/client/settings";
 
 export default function SettingsPage() {
-  const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
+  const { authenticated } = usePrivy();
+  const { settings, loading } = useUserSettings();
+  const [draft, setDraft] = useState<UserSettings>(readUserSettings());
+  const [savingKey, setSavingKey] = useState<keyof UserSettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setSettings(readSettings());
+    setDraft(settings);
+  }, [settings]);
+
+  useEffect(() => {
+    const syncDraft = () => setDraft(readUserSettings());
+    window.addEventListener(USER_SETTINGS_CHANGED_EVENT, syncDraft);
+    return () => window.removeEventListener(USER_SETTINGS_CHANGED_EVENT, syncDraft);
   }, []);
 
-  function update<K extends keyof UserSettings>(key: K, value: UserSettings[K]) {
-    const next = { ...settings, [key]: value };
-    setSettings(next);
-    writeSettings(next);
+  async function update<K extends keyof UserSettings>(key: K, value: UserSettings[K]) {
+    const next = { ...draft, [key]: value };
+    setDraft(next);
+    setSavingKey(key);
+    setError(null);
+    try {
+      await updateUserSettings({ [key]: value });
+    } catch (updateError) {
+      setDraft(settings);
+      setError(
+        updateError instanceof Error ? updateError.message : "Failed to save settings"
+      );
+    } finally {
+      setSavingKey(null);
+    }
   }
 
   return (
@@ -59,12 +55,26 @@ export default function SettingsPage() {
             Back to Feed
           </Link>
         </div>
+        <p className="mb-4 text-sm text-gray-400">
+          These preferences are saved to your account and applied across the app.
+        </p>
+        {!authenticated && (
+          <div className="mb-4 rounded-xl border border-yellow-800 bg-yellow-950 px-4 py-3 text-sm text-yellow-200">
+            Connect Lens to save account preferences.
+          </div>
+        )}
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-800 bg-red-950 px-4 py-3 text-sm text-red-200">
+            {error}
+          </div>
+        )}
         <div className="space-y-3">
           <label className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 p-4">
             <span className="text-sm">Compact feed layout</span>
             <input
               type="checkbox"
-              checked={settings.compactFeed}
+              checked={draft.compactFeed}
+              disabled={!authenticated || loading}
               onChange={(event) => update("compactFeed", event.target.checked)}
             />
           </label>
@@ -72,19 +82,24 @@ export default function SettingsPage() {
             <span className="text-sm">Autoplay videos</span>
             <input
               type="checkbox"
-              checked={settings.autoplayVideos}
+              checked={draft.autoplayVideos}
+              disabled={!authenticated || loading}
               onChange={(event) => update("autoplayVideos", event.target.checked)}
             />
           </label>
           <label className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 p-4">
-            <span className="text-sm">Hide sensitive media</span>
+            <span className="text-sm">Hide media previews until revealed</span>
             <input
               type="checkbox"
-              checked={settings.hideSensitiveMedia}
-              onChange={(event) => update("hideSensitiveMedia", event.target.checked)}
+              checked={draft.hideMediaPreviews}
+              disabled={!authenticated || loading}
+              onChange={(event) => update("hideMediaPreviews", event.target.checked)}
             />
           </label>
         </div>
+        <p className="mt-4 text-xs text-gray-500">
+          {savingKey ? "Saving changes..." : loading ? "Loading preferences..." : "Preferences saved."}
+        </p>
       </div>
     </AppShell>
   );

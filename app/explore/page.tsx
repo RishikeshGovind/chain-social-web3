@@ -1,9 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { readBookmarks, toggleBookmarkId } from "@/lib/client/bookmarks";
+import { BOOKMARKS_CHANGED_EVENT, loadBookmarks, readBookmarks, toggleBookmarkId } from "@/lib/client/bookmarks";
+import { useUserSettings } from "@/lib/client/settings";
+import PostMedia from "@/components/PostMedia";
 
 type Post = {
   id: string;
@@ -43,6 +46,19 @@ type FeedResponse = {
   nextCursor?: string | null;
 };
 
+function isPost(value: unknown): value is Post {
+  if (!value || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  const author = obj.author;
+  return (
+    typeof obj.id === "string" &&
+    typeof obj.timestamp === "string" &&
+    !!author &&
+    typeof author === "object" &&
+    typeof (author as Record<string, unknown>).address === "string"
+  );
+}
+
 function shortenAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
@@ -75,13 +91,11 @@ function renderContentWithWrappedLinks(raw?: string) {
   });
 }
 
-function getMediaKind(url: string): "video" | "gif" | "image" {
-  if (/[?&]__media=video(\b|&|$)/i.test(url)) return "video";
-  if (/[?&]__media=gif(\b|&|$)/i.test(url)) return "gif";
-  if (/\.(mp4|webm|ogg|mov|m4v)(\?|$)/i.test(url)) return "video";
-  if (/\.(gif)(\?|$)/i.test(url)) return "gif";
-  if (/\/(video|videos)\//i.test(url)) return "video";
-  return "image";
+function didAuthExpire(status: number, error: unknown) {
+  return (
+    status === 401 ||
+    (typeof error === "string" && error.includes("Unauthenticated"))
+  );
 }
 
 export default function ExplorePage() {
@@ -93,6 +107,7 @@ export default function ExplorePage() {
   const [replyDraftByPost, setReplyDraftByPost] = useState<Record<string, string>>({});
   const [replyLoadingByPost, setReplyLoadingByPost] = useState<Record<string, boolean>>({});
   const [bookmarkedPostIds, setBookmarkedPostIds] = useState<string[]>([]);
+  const { settings } = useUserSettings();
 
   const { authenticated, user, logout } = usePrivy();
   const viewerAddress = useMemo(
@@ -101,12 +116,22 @@ export default function ExplorePage() {
   );
 
   useEffect(() => {
-    setBookmarkedPostIds(readBookmarks());
+    let cancelled = false;
+    loadBookmarks()
+      .then((ids) => {
+        if (!cancelled) setBookmarkedPostIds(ids);
+      })
+      .catch(() => {
+        if (!cancelled) setBookmarkedPostIds([]);
+      });
     const onBookmarksChanged = () => setBookmarkedPostIds(readBookmarks());
-    window.addEventListener("chainsocial:bookmarks-changed", onBookmarksChanged);
+    window.addEventListener(BOOKMARKS_CHANGED_EVENT, onBookmarksChanged);
     return () =>
-      window.removeEventListener("chainsocial:bookmarks-changed", onBookmarksChanged);
-  }, []);
+      {
+        cancelled = true;
+        window.removeEventListener(BOOKMARKS_CHANGED_EVENT, onBookmarksChanged);
+      };
+  }, [viewerAddress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,6 +203,7 @@ export default function ExplorePage() {
   async function handleLike(postId: string) {
     if (!viewerAddress) return;
     setError(null);
+    const previousPosts = posts;
     const currentlyLiked =
       posts.find((post) => post.id === postId)?.likes?.includes(viewerAddress) ?? false;
 
@@ -206,11 +232,7 @@ export default function ExplorePage() {
         });
         const data = await res.json();
 
-        if (
-          (res.status === 401 ||
-            (typeof data.error === "string" && data.error.includes("Unauthenticated"))) &&
-          retryCount === 0
-        ) {
+        if (didAuthExpire(res.status, data.error) && retryCount === 0) {
           const refreshRes = await fetch("/api/lens/refresh", {
             method: "POST",
             credentials: "include",
@@ -223,10 +245,12 @@ export default function ExplorePage() {
 
       const { ok, data } = await likeWithRetry();
       if (!ok) throw new Error((data.error as string) || "Failed to update like");
-      if (data.post) {
-        setPosts((prev) => prev.map((post) => (post.id === postId ? data.post : post)));
+      if (isPost(data.post)) {
+        const updated = data.post;
+        setPosts((prev) => prev.map((post) => (post.id === postId ? updated : post)));
       }
     } catch (e) {
+      setPosts(previousPosts);
       setError(e instanceof Error ? e.message : "Failed to update like");
     }
   }
@@ -234,6 +258,7 @@ export default function ExplorePage() {
   async function handleRepost(postId: string) {
     if (!viewerAddress) return;
     setError(null);
+    const previousPosts = posts;
     const currentlyReposted =
       posts.find((post) => post.id === postId)?.reposts?.includes(viewerAddress) ?? false;
 
@@ -262,11 +287,7 @@ export default function ExplorePage() {
         });
         const data = await res.json();
 
-        if (
-          (res.status === 401 ||
-            (typeof data.error === "string" && data.error.includes("Unauthenticated"))) &&
-          retryCount === 0
-        ) {
+        if (didAuthExpire(res.status, data.error) && retryCount === 0) {
           const refreshRes = await fetch("/api/lens/refresh", {
             method: "POST",
             credentials: "include",
@@ -279,16 +300,24 @@ export default function ExplorePage() {
 
       const { ok, data } = await repostWithRetry();
       if (!ok) throw new Error((data.error as string) || "Failed to update repost");
-      if (data.post) {
-        setPosts((prev) => prev.map((post) => (post.id === postId ? data.post : post)));
+      if (isPost(data.post)) {
+        const updated = data.post;
+        setPosts((prev) => prev.map((post) => (post.id === postId ? updated : post)));
       }
     } catch (e) {
+      setPosts(previousPosts);
       setError(e instanceof Error ? e.message : "Failed to update repost");
     }
   }
 
-  function handleBookmark(postId: string) {
-    setBookmarkedPostIds(toggleBookmarkId(postId));
+  async function handleBookmark(postId: string) {
+    if (!authenticated || !viewerAddress) return;
+    try {
+      const ids = await toggleBookmarkId(postId);
+      setBookmarkedPostIds(ids);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update bookmark");
+    }
   }
 
   async function fetchReplies(postId: string) {
@@ -322,20 +351,39 @@ export default function ExplorePage() {
     setReplyLoadingByPost((prev) => ({ ...prev, [postId]: true }));
     setError(null);
     try {
-      const res = await fetch(`/api/posts/${postId}/replies`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to post reply");
+      const submitWithRetry = async (
+        retryCount = 0
+      ): Promise<{ ok: boolean; data: Record<string, unknown> }> => {
+        const res = await fetch(`/api/posts/${postId}/replies`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+          credentials: "include",
+        });
+        const data = await res.json();
+
+        if (didAuthExpire(res.status, data.error) && retryCount === 0) {
+          const refreshRes = await fetch("/api/lens/refresh", {
+            method: "POST",
+            credentials: "include",
+          });
+          if (refreshRes.ok) return submitWithRetry(1);
+          throw new Error("Session expired. Please reconnect Lens.");
+        }
+
+        return { ok: res.ok, data };
+      };
+
+      const { ok, data } = await submitWithRetry();
+      if (!ok) throw new Error((data.error as string) || "Failed to post reply");
       setReplyDraftByPost((prev) => ({ ...prev, [postId]: "" }));
       await fetchReplies(postId);
-      if (typeof data.replyCount === "number") {
+      const nextReplyCount =
+        typeof data.replyCount === "number" ? data.replyCount : null;
+      if (nextReplyCount !== null) {
         setPosts((prev) =>
           prev.map((post) =>
-            post.id === postId ? { ...post, replyCount: data.replyCount } : post
+            post.id === postId ? { ...post, replyCount: nextReplyCount } : post
           )
         );
       }
@@ -358,20 +406,29 @@ export default function ExplorePage() {
     { label: "Settings", href: "/settings" },
   ];
 
+  const searchMatches = ranked.slice(0, 3);
+
   return (
-    <div className="min-h-screen grid grid-cols-12 bg-black text-white">
-      <aside className="hidden md:flex md:col-span-3 lg:col-span-2 flex-col border-r border-gray-800 py-8 px-6">
-        <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
-          <p className="text-xl font-bold mb-6 text-white">ChainSocial</p>
-          <nav className="mb-8 space-y-1">
+    <div className="min-h-screen bg-black text-white">
+      <div className="relative isolate grid min-h-screen grid-cols-12">
+        <div className="absolute inset-x-0 top-[-18rem] -z-10 flex justify-center blur-3xl">
+          <div className="h-[36rem] w-[36rem] rounded-full bg-cyan-500/14" />
+        </div>
+        <div className="absolute left-[-8rem] top-56 -z-10 h-72 w-72 rounded-full bg-white/5 blur-3xl" />
+        <div className="absolute right-[-10rem] top-80 -z-10 h-80 w-80 rounded-full bg-lime-400/10 blur-3xl" />
+
+      <aside className="hidden md:flex md:col-span-3 lg:col-span-2 flex-col px-5 py-6 lg:px-6">
+        <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-[2rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
+          <p className="mb-6 text-xl font-black uppercase tracking-[-0.04em] text-white">ChainSocial</p>
+          <nav className="mb-8 space-y-2">
             {sidebarItems.map((item) => (
               <Link
                 key={item.label}
                 href={item.href}
-                className={`block rounded-lg px-3 py-2 transition ${
+                className={`block rounded-xl px-4 py-3 text-sm transition ${
                   item.active
-                    ? "bg-gray-900 text-white font-semibold"
-                    : "text-gray-300 hover:bg-gray-900 hover:text-white"
+                    ? "border border-cyan-400/30 bg-cyan-400/10 font-semibold text-white"
+                    : "text-gray-300 hover:bg-white/[0.06] hover:text-white"
                 }`}
               >
                 {item.label}
@@ -381,7 +438,7 @@ export default function ExplorePage() {
           {authenticated && (
             <button
               onClick={logout}
-              className="rounded-lg px-3 py-2 text-left text-gray-300 hover:bg-gray-900 hover:text-red-400"
+              className="w-full rounded-xl border border-white/10 px-4 py-3 text-left text-gray-300 transition hover:bg-white/[0.06] hover:text-red-300"
             >
               Logout
             </button>
@@ -389,132 +446,199 @@ export default function ExplorePage() {
         </div>
       </aside>
 
-      <main className="col-span-12 md:col-span-9 lg:col-span-8 flex justify-center">
-        <div className="w-full max-w-2xl px-6 py-6">
-          <h1 className="mb-2 text-2xl font-semibold">Explore</h1>
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search posts, usernames, or addresses"
-            className="mb-4 w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm"
-          />
+      <main className="col-span-12 md:col-span-9 lg:col-span-8 flex justify-center px-4 py-6 md:px-6">
+        <div className="w-full max-w-3xl">
+          <section className="animate-fade-up rounded-[2.25rem] border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur sm:p-8">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-2xl">
+                <p className="mb-3 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-[11px] uppercase tracking-[0.28em] text-cyan-200">
+                  Explore
+                </p>
+                <h1 className="text-3xl font-black uppercase leading-none tracking-[-0.05em] text-white sm:text-5xl">
+                  Find the posts
+                  <br />
+                  pulling attention.
+                </h1>
+                <p className="mt-4 max-w-2xl text-sm leading-6 text-gray-300 sm:text-base sm:leading-7">
+                  Search the loaded graph, surface active conversations, and scan what is rising right now.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 sm:max-w-xs">
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                  <p className="text-xl font-bold text-white">{posts.length}</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Loaded</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                  <p className="text-xl font-bold text-white">{ranked.length}</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Ranked</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                  <p className="text-xl font-bold text-white">{query.trim() ? "Live" : "Open"}</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Search</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="animate-fade-up animate-fade-up-delay-1 mt-4 space-y-4 lg:hidden">
+            <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {sidebarItems.map((item) => (
+                <Link
+                  key={`mobile-${item.label}`}
+                  href={item.href}
+                  className={`shrink-0 rounded-full px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
+                    item.active
+                      ? "border border-cyan-400/30 bg-cyan-400/10 text-white"
+                      : "border border-white/10 bg-white/[0.04] text-gray-300"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+
+            <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-4 backdrop-blur">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <p className="text-[11px] uppercase tracking-[0.22em] text-gray-400">Search</p>
+                <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-gray-500">
+                  Ranked live
+                </span>
+              </div>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search posts, usernames, or addresses"
+                className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white"
+              />
+            </div>
+          </section>
+
+          <div className="animate-fade-up animate-fade-up-delay-2 mt-6 rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-white">Search the graph</p>
+                <p className="text-xs text-gray-400">Usernames, addresses, and post content from what is currently loaded.</p>
+              </div>
+              <span className="hidden rounded-full border border-white/10 bg-black/30 px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-cyan-200 sm:inline-flex">
+                Explore
+              </span>
+            </div>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search posts, usernames, or addresses"
+              className="hidden w-full rounded-[1.25rem] border border-white/10 bg-black/30 px-4 py-3 text-sm text-white lg:block"
+            />
+          </div>
 
           {error && (
-            <div className="mb-4 rounded-lg border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-200">
+            <div className="mt-6 rounded-[1.5rem] border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
               {error}
             </div>
           )}
 
-          <div className="space-y-4">
-            {ranked.map(({ post, score }) => {
+          <div className="mt-6 space-y-5">
+            {ranked.map(({ post, score }, index) => {
               const liked = (post.likes ?? []).includes(viewerAddress);
               const reposted = (post.reposts ?? []).includes(viewerAddress);
               const bookmarked = bookmarkedPostIds.includes(post.id);
               const repliesOpen = !!expandedReplies[post.id];
               const replies = repliesByPost[post.id] ?? [];
+              const hasMedia = (post.metadata?.media?.length ?? 0) > 0;
+              const timestamp = new Date(post.timestamp);
+              const timestampLabel = Number.isNaN(timestamp.getTime())
+                ? post.timestamp
+                : timestamp.toLocaleString();
+              const displayName = post.author.username?.localName ?? shortenAddress(post.author.address);
 
               return (
                 <article
                   key={post.id}
-                  className="rounded-2xl border border-gray-700 bg-gray-900 p-4 shadow-sm transition-shadow hover:bg-gray-800 hover:shadow-lg"
+                  className={`animate-fade-up rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.07] via-white/[0.04] to-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] transition duration-200 hover:border-white/15 hover:bg-white/[0.07] ${
+                    settings.compactFeed ? "p-4" : "p-5"
+                  }`}
+                  style={{ animationDelay: `${Math.min(index, 5) * 60}ms` }}
                 >
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <img
+                  <div className="mb-4 flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <Image
                         src={`https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
                         alt="avatar"
-                        className="h-6 w-6 rounded-full border border-gray-700 bg-white"
+                        width={40}
+                        height={40}
+                        unoptimized
+                        className="mt-0.5 h-10 w-10 rounded-full border border-white/10 bg-white object-cover shadow-sm"
                       />
-                      <Link href={`/profile/${post.author.address}`} className="font-semibold hover:underline">
-                        {post.author.username?.localName ?? shortenAddress(post.author.address)}
-                      </Link>
-                      <span className="text-xs text-gray-500">{shortenAddress(post.author.address)}</span>
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <Link href={`/profile/${post.author.address}`} className="inline-block max-w-[18rem] break-all text-[15px] font-semibold text-white hover:underline">
+                            {displayName}
+                          </Link>
+                          <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">
+                            {hasMedia ? "Media post" : "Text post"}
+                          </span>
+                          <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-200">
+                            Hot {score.toFixed(1)}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-xs text-gray-500">
+                          <span className="max-w-[18rem] break-all">{shortenAddress(post.author.address)}</span>
+                          <span>{timestampLabel}</span>
+                        </div>
+                      </div>
                     </div>
-                    <span className="rounded-full bg-emerald-950 px-2 py-1 text-xs text-emerald-300">
-                      Hot {score.toFixed(1)}
-                    </span>
                   </div>
 
-                  <div className="mb-2 whitespace-pre-wrap break-words text-gray-100">
+                  <div className={`mb-4 whitespace-pre-wrap break-words text-gray-100 ${settings.compactFeed ? "text-sm leading-6" : "text-[15px] leading-7"}`}>
                     {renderContentWithWrappedLinks(post.metadata?.content)}
                   </div>
 
                   {post.metadata?.media && post.metadata.media.length > 0 && (
-                    <div className={`mb-2 ${post.metadata.media.length === 1 ? "max-w-xl" : "grid grid-cols-2 gap-2"}`}>
-                      {post.metadata.media.map((url, idx) => {
-                        const mediaKind = getMediaKind(url);
-                        const isSingle = post.metadata!.media!.length === 1;
-                        const frameClass = isSingle
-                          ? "overflow-hidden rounded-xl border border-gray-700 bg-black"
-                          : "overflow-hidden rounded-xl border border-gray-700 bg-black aspect-square";
-                        if (mediaKind === "video") {
-                          return (
-                            <div key={idx} className={frameClass}>
-                              <video
-                                src={url}
-                                controls
-                                className={isSingle ? "w-full max-h-96 object-contain" : "h-full w-full object-cover"}
-                              />
-                            </div>
-                          );
-                        }
-                        return (
-                          <div key={idx} className={frameClass}>
-                            <img
-                              src={url}
-                              alt="media"
-                              className={
-                                mediaKind === "gif"
-                                  ? isSingle
-                                    ? "w-full max-h-96 object-contain"
-                                    : "h-full w-full object-contain"
-                                  : isSingle
-                                    ? "w-full max-h-96 object-cover"
-                                    : "h-full w-full object-cover"
-                              }
-                            />
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <PostMedia media={post.metadata.media} settings={settings} />
                   )}
 
-                  <div className="mt-2 flex items-center gap-4">
+                  <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/10 pt-4">
                     <button
-                      className={`rounded px-2 py-1 text-sm hover:bg-gray-800 ${liked ? "text-pink-500" : "text-gray-400"}`}
+                      className={`flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition-colors ${liked ? "bg-pink-500/10 text-pink-300" : "border border-white/10 text-gray-300 hover:bg-white/[0.06]"}`}
                       onClick={() => void handleLike(post.id)}
                       disabled={!authenticated}
                     >
-                      Like {post.likes?.length ?? 0}
+                      <span className="text-xs uppercase tracking-[0.18em]">Like</span>
+                      <span className="text-xs text-current/80">/</span>
+                      <span>{post.likes?.length ?? 0}</span>
                     </button>
                     <button
-                      className={`rounded px-2 py-1 text-sm hover:bg-gray-800 ${reposted ? "text-green-400" : "text-gray-400"}`}
+                      className={`flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition-colors ${reposted ? "bg-lime-400/10 text-lime-200" : "border border-white/10 text-gray-300 hover:bg-white/[0.06]"}`}
                       onClick={() => void handleRepost(post.id)}
                       disabled={!authenticated}
                     >
-                      {reposted ? "Reposted" : "Repost"} {post.reposts?.length ?? 0}
+                      <span className="text-xs uppercase tracking-[0.18em]">{reposted ? "Reposted" : "Repost"}</span>
+                      <span className="text-xs text-current/80">/</span>
+                      <span>{post.reposts?.length ?? 0}</span>
                     </button>
                     <button
-                      className="rounded px-2 py-1 text-sm text-gray-400 hover:bg-gray-800"
+                      className="flex items-center gap-2 rounded-full border border-white/10 px-3.5 py-2 text-sm text-gray-300 transition hover:bg-white/[0.06]"
                       onClick={() => toggleReplies(post.id)}
                     >
-                      {repliesOpen ? "Hide Replies" : "Replies"} {post.replyCount ?? 0}
+                      <span className="text-xs uppercase tracking-[0.18em]">{repliesOpen ? "Hide Replies" : "Replies"}</span>
+                      <span className="text-xs text-current/80">/</span>
+                      <span>{post.replyCount ?? 0}</span>
                     </button>
                     <button
-                      className={`rounded px-2 py-1 text-sm hover:bg-gray-800 ${bookmarked ? "text-yellow-400" : "text-gray-400"}`}
-                      onClick={() => handleBookmark(post.id)}
+                      className={`flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition-colors ${bookmarked ? "bg-yellow-400/10 text-yellow-200" : "border border-white/10 text-gray-300 hover:bg-white/[0.06]"}`}
+                      onClick={() => void handleBookmark(post.id)}
+                      disabled={!authenticated}
                     >
-                      {bookmarked ? "Bookmarked" : "Bookmark"}
+                      <span className="text-xs uppercase tracking-[0.18em]">{bookmarked ? "Saved" : "Save"}</span>
                     </button>
-                    <span className="text-xs text-gray-500">{new Date(post.timestamp).toLocaleString()}</span>
                   </div>
 
                   {repliesOpen && (
-                    <div className="mt-3 space-y-3 border-t border-gray-700 pt-3">
+                    <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
                       {authenticated && (
                         <div className="space-y-2">
                           <textarea
-                            className="w-full rounded border border-gray-700 bg-black p-2 text-sm text-white"
+                            className="w-full rounded-[1.25rem] border border-white/10 bg-black/40 p-3 text-sm text-white"
                             rows={2}
                             placeholder="Write a reply"
                             value={replyDraftByPost[post.id] ?? ""}
@@ -528,7 +652,7 @@ export default function ExplorePage() {
                           <button
                             onClick={() => void submitReply(post.id)}
                             disabled={replyLoadingByPost[post.id]}
-                            className="rounded bg-blue-600 px-3 py-1 text-xs disabled:opacity-50"
+                            className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-black disabled:opacity-50"
                           >
                             Reply
                           </button>
@@ -538,7 +662,7 @@ export default function ExplorePage() {
                         <p className="text-xs text-gray-400">Loading replies...</p>
                       )}
                       {replies.map((reply) => (
-                        <div key={reply.id} className="rounded-lg border border-gray-800 bg-black/40 p-3">
+                        <div key={reply.id} className="rounded-[1.25rem] border border-white/10 bg-black/30 p-3">
                           <div className="mb-1 flex items-center gap-2">
                             <Link href={`/profile/${reply.author.address}`} className="text-sm font-medium hover:underline">
                               {reply.author.username?.localName ?? shortenAddress(reply.author.address)}
@@ -558,21 +682,52 @@ export default function ExplorePage() {
                 </article>
               );
             })}
-            {ranked.length === 0 && <p className="text-gray-500">No posts match your search.</p>}
+            {ranked.length === 0 && <p className="text-sm text-gray-500">No posts match your search.</p>}
           </div>
         </div>
       </main>
 
-      <aside className="hidden lg:block lg:col-span-2 border-l border-gray-800 px-4 py-8">
-        <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
-          <h2 className="mb-3 text-sm font-semibold text-gray-300">Explore Signals</h2>
-          <div className="space-y-2 text-xs text-gray-500">
-            <p>Replies have highest weight.</p>
-            <p>Reposts and likes boost rank.</p>
-            <p>Older posts decay over time.</p>
+      <aside className="hidden lg:block lg:col-span-2 px-5 py-6 lg:px-6">
+        <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-[2rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
+          <div className="mb-6 rounded-[1.6rem] border border-cyan-400/20 bg-gradient-to-br from-cyan-400/10 via-white/[0.03] to-lime-300/10 p-4">
+            <p className="text-[11px] uppercase tracking-[0.24em] text-cyan-200">Explore Signals</p>
+            <h2 className="mt-2 text-xl font-semibold text-white">Why these posts rise</h2>
+            <p className="mt-2 text-sm leading-6 text-gray-300">
+              Explore favors conversation energy over raw recency so the page surfaces what is actively moving.
+            </p>
+          </div>
+          <div className="space-y-3 text-sm text-gray-300">
+            <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+              Replies carry the strongest weight because they signal actual conversation.
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+              Likes and reposts still matter, but they trail replies in the score.
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+              Older posts decay over time, so fresh activity can overtake stale winners.
+            </div>
+          </div>
+          {query.trim() && (
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-4">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Current query</p>
+              <p className="mt-2 text-sm text-white">“{query.trim()}”</p>
+              <p className="mt-2 text-xs leading-5 text-gray-400">
+                {searchMatches.length === 0
+                  ? "Nothing loaded matches yet."
+                  : `${searchMatches.length} high-signal result${searchMatches.length === 1 ? "" : "s"} visible now.`}
+              </p>
+            </div>
+          )}
+          <div className="mt-8 border-t border-white/10 pt-4 text-xs text-gray-400">
+            <div className="flex flex-col gap-2">
+              <Link href="/legal/privacy" className="hover:text-white">Privacy</Link>
+              <Link href="/legal/terms" className="hover:text-white">Terms</Link>
+              <Link href="/legal/cookies" className="hover:text-white">Cookies</Link>
+            </div>
           </div>
         </div>
       </aside>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { lensRequest } from "@/lib/lens";
+import { logger } from "@/lib/server/logger";
 
 export async function POST(req: Request) {
   try {
@@ -60,11 +61,11 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Profile check failed";
-    console.error("Profile check error:", message, error);
-    // Fallback to false on error but log it
+    logger.warn("lens.profile_check.failed", { error: message });
+    // Return 503 Service Unavailable for backend errors - allows client to distinguish from "no profile"
     return NextResponse.json(
-      { hasProfile: false },
-      { status: 200 } // Return 200 so client doesn't error out
+      { error: "Profile check temporarily unavailable", hasProfile: null },
+      { status: 503 }
     );
   }
 }

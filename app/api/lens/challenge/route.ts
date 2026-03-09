@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { lensRequest } from "@/lib/lens";
+import { logger } from "@/lib/server/logger";
 
 type ChallengeResponse = {
   challenge: {
@@ -90,7 +91,7 @@ export async function POST(req: Request) {
     throw new Error(errors.join(" | "));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Lens challenge error";
-    console.error("Lens challenge error:", message);
+    logger.error("lens.challenge.error", { error: message });
     return NextResponse.json(
       { error: message },
       { status: 500 }

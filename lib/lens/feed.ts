@@ -3,6 +3,9 @@
 import { lensRequest } from "../lens";
 import { normalizeAddress } from "../posts/content";
 import type { Post, Reply } from "../posts/types";
+import { logger } from "@/lib/server/logger";
+import { lookup } from "node:dns/promises";
+import * as net from "node:net";
 
 type LensFetchInput = {
   limit: number;
@@ -26,6 +29,70 @@ type LensRepliesOutput = {
 };
 // cache may store either the raw text or a parsed JSON object
 const metadataContentCache = new Map<string, unknown>();
+const MAX_METADATA_BYTES = 1_000_000;
+const DEFAULT_ALLOWED_METADATA_HOSTS = [
+  "ipfs.io",
+  "cloudflare-ipfs.com",
+  "gateway.pinata.cloud",
+  "dweb.link",
+  "arweave.net",
+];
+
+function getAllowedMetadataHosts() {
+  const configured = process.env.LENS_METADATA_ALLOWED_HOSTS
+    ?.split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+  return new Set<string>([...DEFAULT_ALLOWED_METADATA_HOSTS, ...(configured ?? [])]);
+}
+
+function isPrivateIp(ip: string) {
+  if (net.isIP(ip) === 4) {
+    if (ip.startsWith("10.")) return true;
+    if (ip.startsWith("127.")) return true;
+    if (ip.startsWith("169.254.")) return true;
+    if (ip.startsWith("192.168.")) return true;
+    const [a, b] = ip.split(".").map((part) => Number(part));
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    return false;
+  }
+  if (net.isIP(ip) === 6) {
+    const normalized = ip.toLowerCase();
+    return normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd");
+  }
+  return true;
+}
+
+async function isSafeMetadataUrl(rawUri: string) {
+  let url: URL;
+  try {
+    url = new URL(rawUri);
+  } catch {
+    return false;
+  }
+
+  if (url.protocol !== "https:") return false;
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname.endsWith(".local")) return false;
+
+  const allowList = getAllowedMetadataHosts();
+  const allowedHost = [...allowList].some(
+    (entry) => hostname === entry || hostname.endsWith(`.${entry}`)
+  );
+  if (!allowedHost) return false;
+
+  if (net.isIP(hostname)) {
+    return !isPrivateIp(hostname);
+  }
+
+  try {
+    const resolved = await lookup(hostname, { all: true });
+    if (!resolved.length) return false;
+    return resolved.every((record) => !isPrivateIp(record.address));
+  } catch {
+    return false;
+  }
+}
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -170,6 +237,19 @@ async function fetchMetadata(uri: string): Promise<unknown> {
   }
 
   try {
+    if (uri.startsWith("data:application/json,")) {
+      const encoded = uri.slice("data:application/json,".length);
+      const decoded = decodeURIComponent(encoded);
+      const parsed = JSON.parse(decoded) as unknown;
+      metadataContentCache.set(uri, parsed);
+      return parsed;
+    }
+
+    if (!(await isSafeMetadataUrl(uri))) {
+      metadataContentCache.set(uri, "");
+      return "";
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     const res = await fetch(uri, {
@@ -183,7 +263,17 @@ async function fetchMetadata(uri: string): Promise<unknown> {
       return "";
     }
 
+    const contentLengthHeader = res.headers.get("content-length");
+    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : 0;
+    if (contentLength && contentLength > MAX_METADATA_BYTES) {
+      metadataContentCache.set(uri, "");
+      return "";
+    }
     const text = await res.text();
+    if (text.length > MAX_METADATA_BYTES) {
+      metadataContentCache.set(uri, "");
+      return "";
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
@@ -554,7 +644,6 @@ const QUERY_VARIANTS = [
                   content
                   image {
                     item
-                    raw
                   }
                   attachments {
                     ... on MediaImage {
@@ -566,7 +655,6 @@ const QUERY_VARIANTS = [
                   content
                   video {
                     item
-                    raw
                   }
                   attachments {
                     ... on MediaVideo {
@@ -761,8 +849,8 @@ const FEED_QUERY_VARIANTS = [
                 __typename
                 ... on TextOnlyMetadata { content }
                 ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item raw } }
-                ... on VideoMetadata { content video { item raw } }
+                ... on ImageMetadata { content image { item } }
+                ... on VideoMetadata { content video { item } }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -783,8 +871,8 @@ const FEED_QUERY_VARIANTS = [
                     __typename
                     ... on TextOnlyMetadata { content }
                     ... on ArticleMetadata { content }
-                    ... on ImageMetadata { content image { item raw } }
-                    ... on VideoMetadata { content video { item raw } }
+                    ... on ImageMetadata { content image { item } }
+                    ... on VideoMetadata { content video { item } }
                     ... on AudioMetadata { content audio { item } }
                     ... on EmbedMetadata { content }
                     ... on LinkMetadata { content }
@@ -805,8 +893,8 @@ const FEED_QUERY_VARIANTS = [
                     __typename
                     ... on TextOnlyMetadata { content }
                     ... on ArticleMetadata { content }
-                    ... on ImageMetadata { content image { item raw } }
-                    ... on VideoMetadata { content video { item raw } }
+                    ... on ImageMetadata { content image { item } }
+                    ... on VideoMetadata { content video { item } }
                     ... on AudioMetadata { content audio { item } }
                     ... on EmbedMetadata { content }
                     ... on LinkMetadata { content }
@@ -910,8 +998,8 @@ const AUTHOR_QUERY_VARIANTS = [
                 __typename
                 ... on TextOnlyMetadata { content }
                 ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item raw } }
-                ... on VideoMetadata { content video { item raw } }
+                ... on ImageMetadata { content image { item } }
+                ... on VideoMetadata { content video { item } }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -948,8 +1036,8 @@ const AUTHOR_QUERY_VARIANTS = [
                 __typename
                 ... on TextOnlyMetadata { content }
                 ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item raw } }
-                ... on VideoMetadata { content video { item raw } }
+                ... on ImageMetadata { content image { item } }
+                ... on VideoMetadata { content video { item } }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -986,8 +1074,8 @@ const AUTHOR_QUERY_VARIANTS = [
                 __typename
                 ... on TextOnlyMetadata { content }
                 ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item raw } }
-                ... on VideoMetadata { content video { item raw } }
+                ... on ImageMetadata { content image { item } }
+                ... on VideoMetadata { content video { item } }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -1066,7 +1154,7 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
 
   for (const variant of QUERY_VARIANTS) {
     try {
-      console.log("[Lens] Attempting query with variant...");
+      logger.debug("lens.feed.query_variant");
       if (normalizedAuthor) {
         const collected: Post[] = [];
         const seenIds = new Set<string>();
@@ -1104,9 +1192,9 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
       }
 
       const data = await lensRequest(variant.query, variant.variables(input), input.accessToken);
-      console.log("[Lens] Query successful, extracting posts...", data);
+      logger.debug("lens.feed.query_success", { hasData: !!data });
       const extracted = await extractPosts(data, input.debug);
-      console.log("[Lens] Extracted posts:", extracted.items.length, "items");
+      logger.debug("lens.feed.posts_extracted", { count: extracted.items.length });
       return {
         // Lens PageSize is enum-based (TEN/FIFTY). When requesting limit=20,
         // the API page is often FIFTY; slicing to 20 while using the FIFTY cursor
@@ -1117,13 +1205,136 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Lens query failed";
-      console.warn("[Lens] Query failed:", msg);
+      logger.warn("lens.feed.query_failed", { error: msg });
       errors.push(msg);
     }
   }
 
-  console.error("[Lens] All query variants failed:", errors);
+  logger.error("lens.feed.query_all_failed", { errors });
   throw new Error(errors.join(" | "));
+}
+
+export async function fetchLensPostById(input: {
+  postId: string;
+  accessToken?: string;
+}): Promise<Post | null> {
+  const postId = String(input.postId ?? "").trim();
+  if (!postId) return null;
+
+  const queryVariants: Array<{ query: string; variables: Record<string, unknown> }> = [
+    {
+      query: `
+        query Post($request: PostRequest!) {
+          post(request: $request) {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              metadata {
+                __typename
+                ... on TextOnlyMetadata { content }
+                ... on ArticleMetadata {
+                  content
+                  attachments {
+                    ... on MediaImage { item }
+                    ... on MediaVideo { item }
+                  }
+                }
+                ... on ImageMetadata {
+                  content
+                  image { item }
+                  attachments {
+                    ... on MediaImage { item }
+                  }
+                }
+                ... on VideoMetadata {
+                  content
+                  video { item }
+                  attachments {
+                    ... on MediaVideo { item }
+                  }
+                }
+                ... on AudioMetadata {
+                  content
+                  audio { item }
+                }
+                ... on EmbedMetadata { content }
+                ... on LinkMetadata { content }
+              }
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+          }
+        }
+      `,
+      variables: { request: { for: postId } },
+    },
+    {
+      query: `
+        query Post($request: PostRequest!) {
+          post(request: $request) {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              metadata {
+                __typename
+                ... on TextOnlyMetadata { content }
+                ... on ArticleMetadata { content }
+                ... on ImageMetadata { content image { item } }
+                ... on VideoMetadata { content video { item } }
+                ... on AudioMetadata { content audio { item } }
+                ... on EmbedMetadata { content }
+                ... on LinkMetadata { content }
+              }
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+          }
+        }
+      `,
+      variables: { request: { post: postId } },
+    },
+    {
+      query: `
+        query Post($request: PostRequest!) {
+          post(request: $request) {
+            __typename
+            ... on Post {
+              id
+              timestamp
+              content
+              author {
+                address
+                username { localName }
+              }
+              stats { comments }
+            }
+          }
+        }
+      `,
+      variables: { request: { id: postId } },
+    },
+  ];
+
+  for (const variant of queryVariants) {
+    try {
+      const data = await lensRequest(variant.query, variant.variables, input.accessToken);
+      const root = asObject(data);
+      const mapped = await mapNodeToPost(root?.post);
+      if (mapped?.post) return mapped.post;
+    } catch {
+      // Try next query shape.
+    }
+  }
+
+  return null;
 }
 
 function buildPostReferencesQuery(referenceType: string, includePaging: boolean): string {

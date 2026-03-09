@@ -1,9 +1,13 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { readBookmarks, toggleBookmarkId } from "@/lib/client/bookmarks";
+import { useEffect, useState } from "react";
+import { usePrivy } from "@privy-io/react-auth";
+import { BOOKMARKS_CHANGED_EVENT, toggleBookmarkId } from "@/lib/client/bookmarks";
 import AppShell from "@/components/AppShell";
+import { useUserSettings } from "@/lib/client/settings";
+import PostMedia from "@/components/PostMedia";
 
 type Post = {
   id: string;
@@ -20,9 +24,10 @@ type Post = {
   };
 };
 
-type FeedResponse = {
+type BookmarksResponse = {
+  ids?: string[];
   posts?: Post[];
-  nextCursor?: string | null;
+  error?: string;
 };
 
 const URL_SPLIT_REGEX = /(https?:\/\/[^\s]+)/gi;
@@ -59,174 +64,173 @@ function renderContentWithWrappedLinks(raw?: string) {
   });
 }
 
-function getMediaKind(url: string): "video" | "gif" | "image" {
-  if (/[?&]__media=video(\b|&|$)/i.test(url)) return "video";
-  if (/[?&]__media=gif(\b|&|$)/i.test(url)) return "gif";
-  if (/\.(mp4|webm|ogg|mov|m4v)(\?|$)/i.test(url)) return "video";
-  if (/\.(gif)(\?|$)/i.test(url)) return "gif";
-  if (/\/(video|videos)\//i.test(url)) return "video";
-  return "image";
-}
-
 export default function BookmarksPage() {
-  const [bookmarkedIds, setBookmarkedIds] = useState<string[]>([]);
-  const [postsById, setPostsById] = useState<Record<string, Post>>({});
+  const { authenticated } = usePrivy();
+  const { settings } = useUserSettings();
+  const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setBookmarkedIds(readBookmarks());
-    const onBookmarksChanged = () => setBookmarkedIds(readBookmarks());
-    window.addEventListener("chainsocial:bookmarks-changed", onBookmarksChanged);
-    return () =>
-      window.removeEventListener("chainsocial:bookmarks-changed", onBookmarksChanged);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadPosts() {
-      setLoading(true);
-      try {
-        const collected = new Map<string, Post>();
-        let cursor: string | null = null;
-        for (let page = 0; page < 8; page += 1) {
-          const params = new URLSearchParams({ limit: "50" });
-          if (cursor) params.set("cursor", cursor);
-          const res = await fetch(`/api/posts?${params.toString()}`, {
-            credentials: "include",
-            cache: "no-store",
-          });
-          const data = (await res.json()) as FeedResponse;
-          for (const post of data.posts ?? []) {
-            collected.set(post.id, post);
-          }
-          cursor = data.nextCursor ?? null;
-          if (!cursor) break;
-        }
-
-        if (!cancelled) {
-          setPostsById(Object.fromEntries(collected.entries()));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+  async function loadBookmarksPage() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/bookmarks?includePosts=1", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const data = (await res.json()) as BookmarksResponse;
+      if (!res.ok) {
+        throw new Error(
+          res.status === 401 ? "Connect Lens to view bookmarks." : data.error || "Failed to load bookmarks"
+        );
       }
+      setPosts(Array.isArray(data.posts) ? data.posts : []);
+    } catch (loadError) {
+      setPosts([]);
+      setError(loadError instanceof Error ? loadError.message : "Failed to load bookmarks");
+    } finally {
+      setLoading(false);
     }
+  }
 
-    void loadPosts();
-    return () => {
-      cancelled = true;
+  useEffect(() => {
+    void loadBookmarksPage();
+    const onBookmarksChanged = () => {
+      void loadBookmarksPage();
     };
-  }, []);
+    window.addEventListener(BOOKMARKS_CHANGED_EVENT, onBookmarksChanged);
+    return () => window.removeEventListener(BOOKMARKS_CHANGED_EVENT, onBookmarksChanged);
+  }, [authenticated]);
 
-  const bookmarkedPosts = useMemo(() => {
-    return bookmarkedIds
-      .map((id) => postsById[id])
-      .filter((post): post is Post => !!post)
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  }, [bookmarkedIds, postsById]);
+  async function handleUnbookmark(postId: string) {
+    try {
+      await toggleBookmarkId(postId);
+      setPosts((prev) => prev.filter((post) => post.id !== postId));
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : "Failed to update bookmark");
+    }
+  }
 
   return (
     <AppShell active="Bookmarks">
-      <div className="w-full max-w-3xl px-6 py-8 text-white">
-        <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Bookmarks</h1>
-          <Link href="/feed" className="text-sm text-blue-400 hover:underline">
-            Back to Feed
-          </Link>
-        </div>
+      <div className="w-full max-w-3xl text-white">
+        <section className="animate-fade-up rounded-[2.25rem] border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur sm:p-8">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl">
+              <p className="mb-3 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-[11px] uppercase tracking-[0.28em] text-cyan-200">
+                Bookmarks
+              </p>
+              <h1 className="text-3xl font-black uppercase leading-none tracking-[-0.05em] text-white sm:text-5xl">
+                Save what matters.
+                <br />
+                Revisit without hunting.
+              </h1>
+              <p className="mt-4 max-w-2xl text-sm leading-6 text-gray-300 sm:text-base sm:leading-7">
+                Keep the posts you want to come back to. Your saved view stays focused and fast.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:max-w-xs">
+              <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                <p className="text-xl font-bold text-white">{posts.length}</p>
+                <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Saved</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                <p className="text-xl font-bold text-white">{authenticated ? "On" : "Off"}</p>
+                <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Access</p>
+              </div>
+            </div>
+          </div>
+        </section>
 
-        {loading && <p className="text-gray-400">Loading bookmarks...</p>}
-        {!loading && bookmarkedIds.length === 0 && (
-          <p className="text-gray-500">No bookmarks yet. Save posts from the feed.</p>
-        )}
-        {!loading && bookmarkedIds.length > 0 && bookmarkedPosts.length === 0 && (
-          <p className="text-gray-500">
-            Bookmarked posts are outside the loaded feed window. Scroll further in feed, then come
-            back.
+        {error && (
+          <p className="mt-6 rounded-[1.5rem] border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+            {error}
           </p>
         )}
+        {!authenticated && !loading && !error && (
+          <p className="mt-6 text-sm text-gray-500">Connect your account to manage your saved posts.</p>
+        )}
+        {loading && <div className="mt-6 space-y-5"><BookmarkSkeleton compact={settings.compactFeed} /><BookmarkSkeleton compact={settings.compactFeed} /></div>}
+        {!loading && posts.length === 0 && (
+          <p className="mt-6 text-sm text-gray-500">No bookmarks yet. Save posts from the feed.</p>
+        )}
 
-        <div className="space-y-4">
-          {bookmarkedPosts.map((post) => (
+        <div className="mt-6 space-y-5">
+          {posts.map((post) => (
             <article
               key={post.id}
-              className="rounded-2xl border border-gray-700 bg-gray-900 p-4 shadow-sm transition-shadow hover:bg-gray-800 hover:shadow-lg"
+              className={`animate-fade-up rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.07] via-white/[0.04] to-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] transition duration-200 hover:border-white/15 hover:bg-white/[0.07] ${
+                settings.compactFeed ? "p-4" : "p-5"
+              }`}
             >
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <img
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <Image
                     src={`https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
                     alt="avatar"
-                    className="h-6 w-6 rounded-full border border-gray-700 bg-white"
+                    width={40}
+                    height={40}
+                    unoptimized
+                    className="mt-0.5 h-10 w-10 rounded-full border border-white/10 bg-white object-cover shadow-sm"
                   />
-                  <Link href={`/profile/${post.author.address}`} className="font-semibold hover:underline">
-                    {post.author.username?.localName ?? shortenAddress(post.author.address)}
-                  </Link>
-                  <span className="text-xs text-gray-500">{shortenAddress(post.author.address)}</span>
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <Link href={`/profile/${post.author.address}`} className="inline-block max-w-[18rem] break-all text-[15px] font-semibold text-white hover:underline">
+                        {post.author.username?.localName ?? shortenAddress(post.author.address)}
+                      </Link>
+                      <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">
+                        {(post.metadata?.media?.length ?? 0) > 0 ? "Media post" : "Text post"}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-gray-500">{new Date(post.timestamp).toLocaleString()}</div>
+                  </div>
                 </div>
                 <button
-                  onClick={() => setBookmarkedIds(toggleBookmarkId(post.id))}
-                  className="rounded px-2 py-1 text-xs text-yellow-400 hover:bg-gray-800 hover:underline"
+                  onClick={() => void handleUnbookmark(post.id)}
+                  className="rounded-full border border-yellow-400/20 px-3 py-1.5 text-xs text-yellow-200 transition hover:bg-yellow-400/10"
                 >
-                  Unbookmark
+                  Remove
                 </button>
               </div>
 
-              <div className="mb-2 whitespace-pre-wrap break-words text-gray-100">
+              <div className={`mb-4 whitespace-pre-wrap break-words text-gray-100 ${settings.compactFeed ? "text-sm leading-6" : "text-[15px] leading-7"}`}>
                 {renderContentWithWrappedLinks(post.metadata?.content)}
               </div>
 
               {post.metadata?.media && post.metadata.media.length > 0 && (
-                <div
-                  className={`mb-2 ${
-                    post.metadata.media.length === 1 ? "max-w-xl" : "grid grid-cols-2 gap-2"
-                  }`}
-                >
-                  {post.metadata.media.map((url, idx) => {
-                    const mediaKind = getMediaKind(url);
-                    const isSingle = post.metadata!.media!.length === 1;
-                    const frameClass = isSingle
-                      ? "overflow-hidden rounded-xl border border-gray-700 bg-black"
-                      : "overflow-hidden rounded-xl border border-gray-700 bg-black aspect-square";
-
-                    if (mediaKind === "video") {
-                      return (
-                        <div key={idx} className={frameClass}>
-                          <video
-                            src={url}
-                            controls
-                            className={isSingle ? "w-full max-h-96 object-contain" : "h-full w-full object-cover"}
-                          />
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div key={idx} className={frameClass}>
-                        <img
-                          src={url}
-                          alt="media"
-                          className={
-                            mediaKind === "gif"
-                              ? isSingle
-                                ? "w-full max-h-96 object-contain"
-                                : "h-full w-full object-contain"
-                              : isSingle
-                                ? "w-full max-h-96 object-cover"
-                                : "h-full w-full object-cover"
-                          }
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
+                <PostMedia media={post.metadata.media} settings={settings} />
               )}
-
-              <p className="text-xs text-gray-500">{new Date(post.timestamp).toLocaleString()}</p>
             </article>
           ))}
         </div>
       </div>
     </AppShell>
+  );
+}
+
+function BookmarkSkeleton({ compact }: { compact: boolean }) {
+  return (
+    <div
+      className={`animate-pulse rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.07] via-white/[0.04] to-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] ${
+        compact ? "p-4" : "p-5"
+      }`}
+      aria-hidden="true"
+    >
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="h-10 w-10 rounded-full bg-white/10" />
+          <div className="space-y-2">
+            <div className="h-4 w-36 rounded-full bg-white/10" />
+            <div className="h-3 w-32 rounded-full bg-white/5" />
+          </div>
+        </div>
+        <div className="h-8 w-20 rounded-full bg-white/5" />
+      </div>
+      <div className="space-y-2">
+        <div className="h-4 w-full rounded-full bg-white/10" />
+        <div className="h-4 w-[80%] rounded-full bg-white/10" />
+      </div>
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { checkReplyRateLimit } from "@/lib/posts/rate-limit";
+import { checkReplyRateLimit } from "@/lib/server/rate-limit";
 import {
   isValidAddress,
   normalizeAddress,
@@ -10,6 +10,8 @@ import { createReply, listReplies, upsertReply } from "@/lib/posts/store";
 import { createLensReply } from "@/lib/lens/writes";
 import { lensRequest } from "@/lib/lens";
 import { fetchLensReplies } from "@/lib/lens/feed";
+import { notifyPostReplied } from "@/lib/server/notifications/helpers";
+import { logger } from "@/lib/server/logger";
 import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
@@ -347,18 +349,27 @@ export async function GET(
       } catch (lensError) {
         const message =
           lensError instanceof Error ? lensError.message : "unknown error";
-        console.warn(
-          "Lens replies fetch failed, falling back to local store:",
-          message
-        );
+        logger.warn("posts.replies.fetch_lens_fallback", { error: message });
       }
     }
 
-    const data = await listReplies({
-      postId,
-      limit: boundedLimit,
-      cursor,
-    });
+    let data;
+    try {
+      data = await listReplies({
+        postId,
+        limit: boundedLimit,
+        cursor,
+      });
+    } catch (localError) {
+      const localMessage =
+        localError instanceof Error ? localError.message : "local replies unavailable";
+      logger.error("posts.replies.local_load_failed", { error: localMessage });
+      return NextResponse.json({
+        replies: [],
+        nextCursor: null,
+        localFallbackError: localMessage,
+      });
+    }
 
     return NextResponse.json(data);
   } catch (error) {
@@ -380,7 +391,7 @@ export async function POST(
       );
     }
 
-    const rateLimit = checkReplyRateLimit(actorAddress);
+    const rateLimit = await checkReplyRateLimit(actorAddress);
     if (!rateLimit.ok) {
       const retryAfterSeconds = Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1000));
       return NextResponse.json(
@@ -482,6 +493,12 @@ export async function POST(
           replyCount: mirror.replyCount,
           source: "lens",
         });
+        await notifyPostReplied({
+          postId,
+          replyId: mirror.reply.id,
+          actorAddress,
+          accessToken,
+        });
         applyRefreshedCookies(successResponse, refreshedTokens);
         return successResponse;
       } catch (lensError) {
@@ -545,6 +562,12 @@ export async function POST(
                 replyCount: mirror.replyCount,
                 source: "lens",
               });
+              await notifyPostReplied({
+                postId,
+                replyId: mirror.reply.id,
+                actorAddress,
+                accessToken: retryTokens.accessToken,
+              });
               applyRefreshedCookies(successResponse, retryTokens);
               return successResponse;
             } catch (retryError) {
@@ -553,10 +576,7 @@ export async function POST(
             }
           }
         }
-        console.warn(
-          "Lens reply mutation failed:",
-          message
-        );
+        logger.warn("posts.replies.mutation_lens_failed", { error: message });
         return NextResponse.json(
           {
             error: `Lens reply failed: ${message}. Reply was not published to Lens.`,
@@ -572,6 +592,11 @@ export async function POST(
       address: actorAddress,
       content: parsedContent.content,
       username,
+    });
+    await notifyPostReplied({
+      postId,
+      replyId: result.reply.id,
+      actorAddress,
     });
 
     return NextResponse.json({
