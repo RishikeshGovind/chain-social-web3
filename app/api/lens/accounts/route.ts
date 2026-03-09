@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { lensRequest } from "@/lib/lens";
+import { logger } from "@/lib/server/logger";
 
 type AccountsResponse = {
   accountsAvailable: {
@@ -51,7 +52,7 @@ export async function POST(req: Request) {
     return NextResponse.json(data.accountsAvailable.items);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch accounts";
-    console.error(message);
+    logger.error("lens.accounts.error", { error: message });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

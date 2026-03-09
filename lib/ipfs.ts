@@ -1,4 +1,5 @@
 import axios from "axios";
+import { logger } from "@/lib/server/logger";
 
 // Multiple IPFS gateway options for reliability
 const IPFS_GATEWAYS = [
@@ -107,7 +108,7 @@ export async function uploadToIPFS(file: File): Promise<string> {
   if (pinataJwt) {
     const pinataResult = await uploadToPinata(file, pinataJwt);
     if (pinataResult) {
-      console.log("[IPFS] Uploaded to Pinata:", pinataResult);
+      logger.info("ipfs.upload.pinata", { provider: "pinata" });
       return ipfsToHttp(pinataResult);
     }
   }
@@ -116,7 +117,7 @@ export async function uploadToIPFS(file: File): Promise<string> {
   if (web3StorageKey) {
     const web3Result = await uploadToWeb3Storage(file, web3StorageKey);
     if (web3Result) {
-      console.log("[IPFS] Uploaded to Web3.Storage:", web3Result);
+      logger.info("ipfs.upload.web3_storage", { provider: "web3.storage" });
       return ipfsToHttp(web3Result);
     }
   }
@@ -124,12 +125,12 @@ export async function uploadToIPFS(file: File): Promise<string> {
   // Try NFT.Storage (free)
   const nftStorageResult = await uploadToNFTStorage(file);
   if (nftStorageResult) {
-    console.log("[IPFS] Uploaded to NFT.Storage:", nftStorageResult);
+    logger.info("ipfs.upload.nft_storage", { provider: "nft.storage" });
     return ipfsToHttp(nftStorageResult);
   }
 
   // Fallback to data URI (works locally but may not work with Lens)
-  console.warn("[IPFS] All IPFS providers failed, using data URI fallback");
+  logger.warn("ipfs.upload.data_uri_fallback");
   const dataUri = await createDataUri(file);
   return dataUri;
 }

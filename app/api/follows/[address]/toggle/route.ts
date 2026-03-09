@@ -3,6 +3,7 @@ import { isValidAddress, normalizeAddress } from "@/lib/posts/content";
 import { toggleFollow } from "@/lib/posts/store";
 import { toggleLensFollow } from "@/lib/lens/writes";
 import { notifyFollowed } from "@/lib/server/notifications/helpers";
+import { logger } from "@/lib/server/logger";
 import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
@@ -55,7 +56,7 @@ export async function PATCH(
         return NextResponse.json({ success: true, ...lensResult, source: "lens" });
       } catch (lensError) {
         const message = lensError instanceof Error ? lensError.message : "unknown error";
-        console.warn("Lens follow mutation failed:", message);
+        logger.warn("follows.toggle.lens_failed", { error: message });
         return NextResponse.json(
           { error: `Lens follow failed: ${message}. Action was not published to Lens.` },
           { status: 502 }

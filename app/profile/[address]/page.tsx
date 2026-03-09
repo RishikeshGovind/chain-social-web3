@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { notFound } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
@@ -391,15 +392,18 @@ export default function UserProfilePage({ params }: { params: { address: string 
         <section className="animate-fade-up overflow-hidden rounded-[2.25rem] border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
         <div className="h-44 w-full relative">
           {coverImage ? (
-            <img src={coverImage} alt="cover" className="object-cover w-full h-full" />
+            <Image src={coverImage} alt="cover" fill unoptimized className="object-cover" />
           ) : (
             <div className="w-full h-full bg-gradient-to-r from-cyan-900 via-slate-900 to-lime-900" />
           )}
           <div className="absolute inset-0 bg-black/20" />
           <div className="absolute left-1/2 transform -translate-x-1/2 top-24 z-10">
-            <img
+            <Image
               src={avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${params.address}`}
               alt="avatar"
+              width={128}
+              height={128}
+              unoptimized
               className="w-32 h-32 rounded-full border-4 border-black shadow-xl bg-white object-cover"
             />
           </div>
@@ -532,9 +536,12 @@ export default function UserProfilePage({ params }: { params: { address: string 
                       style={{ animationDelay: `${Math.min(index, 5) * 60}ms` }}
                     >
                       <Link href={`/profile/${post.author.address}`} className="shrink-0">
-                        <img
+                        <Image
                           src={avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
                           alt="avatar"
+                          width={40}
+                          height={40}
+                          unoptimized
                           className="w-10 h-10 rounded-full border border-white/10 bg-white object-cover shadow-sm"
                         />
                       </Link>

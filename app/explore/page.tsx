@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
@@ -560,9 +561,12 @@ export default function ExplorePage() {
                 >
                   <div className="mb-4 flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">
-                      <img
+                      <Image
                         src={`https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
                         alt="avatar"
+                        width={40}
+                        height={40}
+                        unoptimized
                         className="mt-0.5 h-10 w-10 rounded-full border border-white/10 bg-white object-cover shadow-sm"
                       />
                       <div className="min-w-0">

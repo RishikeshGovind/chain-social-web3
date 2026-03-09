@@ -6,6 +6,18 @@ import {
   resolveBookmarkedPosts,
   toggleBookmark,
 } from "@/lib/server/bookmarks/store";
+import { logger } from "@/lib/server/logger";
+
+async function parseJsonBody(req: Request): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
+  try {
+    const body = await req.json();
+    return { ok: true, body };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid JSON";
+    logger.warn("bookmarks.json_parse_failed", { error: message });
+    return { ok: false, error: "Invalid JSON body" };
+  }
+}
 
 async function getActor() {
   const actorAddress = await getActorAddressFromLensCookie();
@@ -43,13 +55,18 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json().catch(() => ({}));
+  const parsed = await parseJsonBody(req);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+  const body = parsed.body as Record<string, unknown>;
   const postId = typeof body?.postId === "string" ? body.postId.trim() : "";
   if (!postId) {
     return NextResponse.json({ error: "Missing post id" }, { status: 400 });
   }
 
   const result = await toggleBookmark(actor, postId);
+  logger.info("bookmarks.toggled", { actor, postId, bookmarked: result.bookmarked });
   return NextResponse.json({
     actor,
     ...result,

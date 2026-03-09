@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import type { UserSettings } from "@/lib/client/settings";
 
@@ -67,9 +68,12 @@ export default function PostMedia({ media, settings }: PostMediaProps) {
 
         return (
           <div key={idx} className={frameClass}>
-            <img
+            <Image
               src={url}
               alt="media"
+              width={1200}
+              height={900}
+              unoptimized
               className={
                 mediaKind === "gif"
                   ? isSingle

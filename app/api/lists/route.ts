@@ -9,6 +9,18 @@ import {
   removeListMember,
   renameUserList,
 } from "@/lib/server/lists/store";
+import { logger } from "@/lib/server/logger";
+
+async function parseJsonBody(req: Request): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
+  try {
+    const body = await req.json();
+    return { ok: true, body };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid JSON";
+    logger.warn("lists.json_parse_failed", { error: message });
+    return { ok: false, error: "Invalid JSON body" };
+  }
+}
 
 async function getActor() {
   const actorAddress = await getActorAddressFromLensCookie();
@@ -32,13 +44,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json().catch(() => ({}));
+  const parsed = await parseJsonBody(req);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+  const body = parsed.body as Record<string, unknown>;
   const name = typeof body?.name === "string" ? body.name : "";
   const result = await createUserList(actor, name);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
+  logger.info("lists.created", { actor, listId: result.list?.id });
   const lists = await listUserLists(actor);
   return NextResponse.json({ actor, list: result.list, lists }, { status: 201 });
 }
@@ -49,7 +66,11 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json().catch(() => ({}));
+  const parsed = await parseJsonBody(req);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+  const body = parsed.body as Record<string, unknown>;
   const listId = typeof body?.listId === "string" ? body.listId : "";
   const action = typeof body?.action === "string" ? body.action : "";
   if (!listId || !action) {

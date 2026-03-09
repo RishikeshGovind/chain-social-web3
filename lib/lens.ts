@@ -1,12 +1,26 @@
 //lib/lens.ts
 
 import axios from "axios";
+import { logger } from "@/lib/server/logger";
+import { ensureRuntimeConfig } from "@/lib/server/runtime-config";
 
 type GraphQLError = { message: string };
 type GraphQLResponse<TData> = {
   data?: TData;
   errors?: GraphQLError[];
 };
+
+function parsePositiveInt(value: string | undefined, fallback: number) {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function shouldLogLensRequests() {
+  const raw = process.env.CHAINSOCIAL_LENS_DEBUG?.trim().toLowerCase();
+  if (raw === "1" || raw === "true" || raw === "yes") return true;
+  return process.env.NODE_ENV !== "production";
+}
 
 function getLensApiCandidates() {
   // Lens v3 uses api.lens.xyz/graphql as the primary endpoint
@@ -31,7 +45,9 @@ function getLensApiCandidates() {
   if (normalized) urls.push(normalized);
   if (!urls.includes(defaultUrl)) urls.push(defaultUrl);
 
-  console.log("[Lens] Using API endpoints:", urls);
+  if (shouldLogLensRequests()) {
+    logger.debug("lens.api_candidates", { urls });
+  }
   return urls;
 }
 
@@ -40,6 +56,7 @@ export async function lensRequest<TData = Record<string, unknown>, TVariables = 
   variables?: TVariables,
   accessToken?: string
 ): Promise<TData> {
+  ensureRuntimeConfig();
   const appOrigin =
     process.env.LENS_ORIGIN?.trim() ||
     process.env.NEXT_PUBLIC_APP_URL?.trim() ||
@@ -47,6 +64,7 @@ export async function lensRequest<TData = Record<string, unknown>, TVariables = 
   const referer = appOrigin.endsWith("/") ? appOrigin : `${appOrigin}/`;
 
   const candidates = getLensApiCandidates();
+  const requestTimeoutMs = parsePositiveInt(process.env.CHAINSOCIAL_LENS_TIMEOUT_MS, 8000);
   
   if (candidates.length === 0) {
     throw new Error(`Lens request failed: No endpoints available`);
@@ -64,7 +82,7 @@ export async function lensRequest<TData = Record<string, unknown>, TVariables = 
       accessToken,
       appOrigin,
       referer,
-      8000
+      requestTimeoutMs
     );
   } catch (err) {
     primaryError = err instanceof Error ? err : new Error(String(err));
@@ -92,7 +110,7 @@ export async function lensRequest<TData = Record<string, unknown>, TVariables = 
         accessToken,
         appOrigin,
         referer,
-        8000
+        requestTimeoutMs
       )
     )
   );
@@ -127,9 +145,12 @@ async function makeRequest<TData>(
   timeout: number
 ): Promise<TData> {
   // Keep logs minimal to avoid leaking tokens/signatures in production logs.
-  console.log("[Lens] POST", url, {
-    hasAccessToken: !!accessToken,
-  });
+  if (shouldLogLensRequests()) {
+    logger.debug("lens.request", {
+      url,
+      hasAccessToken: !!accessToken,
+    });
+  }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

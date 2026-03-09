@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
-import { isAdminRequest } from "@/lib/server/compliance/admin";
+import { isLegacyAdminTokenRequest } from "@/lib/server/compliance/admin";
+import { getAdminOperator } from "@/lib/server/compliance/operator-auth";
 import { appendComplianceAuditEvent, runComplianceRetention } from "@/lib/server/compliance/store";
 
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
+
 export async function POST(req: Request) {
-  if (!isAdminRequest(req.headers)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const operator = await getAdminOperator();
+  if (!operator && !isLegacyAdminTokenRequest(req.headers)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: NO_STORE_HEADERS });
   }
 
   const body = await req.json().catch(() => ({}));
@@ -20,9 +24,12 @@ export async function POST(req: Request) {
   const result = await runComplianceRetention({ auditDays, completedDsarDays });
   await appendComplianceAuditEvent({
     type: "compliance.retention.executed",
-    actor: "admin",
-    metadata: result,
+    actor: operator?.address ?? "legacy-token",
+    metadata: {
+      ...result,
+      authMethod: operator?.authMethod ?? "legacy-token",
+    },
   });
 
-  return NextResponse.json({ success: true, result });
+  return NextResponse.json({ success: true, result }, { headers: NO_STORE_HEADERS });
 }

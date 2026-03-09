@@ -14,6 +14,7 @@ import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
 } from "@/lib/server/auth/lens-actor";
+import { logger } from "@/lib/server/logger";
 import { isPrimaryStateStoreHealthy } from "@/lib/server/persistence";
 
 // Helper to get Lens account address from wallet address
@@ -265,11 +266,13 @@ export async function GET(req: Request) {
           } catch (localMergeError) {
             const message =
               localMergeError instanceof Error ? localMergeError.message : "unknown local merge error";
-            console.warn("[Post API] Skipping local merge for Lens feed:", message);
+            logger.warn("posts.feed.local_merge_skipped", { reason: message });
             allowLocalEnrichment = false;
           }
         } else if (!cursor) {
-          console.warn("[Post API] Skipping local merge for Lens feed: primary state store unhealthy.");
+          logger.warn("posts.feed.local_merge_skipped", {
+            reason: "primary state store unhealthy",
+          });
         }
 
         let repostMap = new Map<string, string[]>();
@@ -284,7 +287,7 @@ export async function GET(req: Request) {
             );
           } catch (repostError) {
             const message = repostError instanceof Error ? repostError.message : "unknown repost enrichment error";
-            console.warn("[Post API] Skipping local repost enrichment for Lens feed:", message);
+            logger.warn("posts.feed.repost_enrichment_skipped", { reason: message });
           }
         }
 
@@ -302,10 +305,7 @@ export async function GET(req: Request) {
       } catch (lensError) {
         const lensMessage =
           lensError instanceof Error ? lensError.message : "unknown error";
-        console.warn(
-          "Lens feed fetch failed, falling back to local store:",
-          lensMessage
-        );
+        logger.warn("posts.feed.lens_fallback", { reason: lensMessage });
         try {
           const localData = await withTimeout(
             listPosts({
@@ -347,7 +347,7 @@ export async function GET(req: Request) {
                 relaxedLocalError instanceof Error
                   ? relaxedLocalError.message
                   : "unknown relaxed local fallback error";
-              console.error("Relaxed local feed fallback failed:", relaxedMessage);
+              logger.error("posts.feed.relaxed_local_fallback_failed", { error: relaxedMessage });
               return NextResponse.json({
                 posts: [],
                 nextCursor: null,
@@ -361,7 +361,7 @@ export async function GET(req: Request) {
 
           const localMessage =
             localError instanceof Error ? localError.message : "unknown local fallback error";
-          console.error("Local feed fallback failed:", localMessage);
+          logger.error("posts.feed.local_fallback_failed", { error: localMessage });
           // Keep feed route stable for clients even during backend incidents.
           return NextResponse.json({
             posts: [],
@@ -410,7 +410,7 @@ export async function GET(req: Request) {
             relaxedLocalError instanceof Error
               ? relaxedLocalError.message
               : "local feed unavailable";
-          console.error("Relaxed local feed load failed:", relaxedMessage);
+              logger.error("posts.feed.relaxed_local_load_failed", { error: relaxedMessage });
           return NextResponse.json({
             posts: [],
             nextCursor: null,
@@ -423,7 +423,7 @@ export async function GET(req: Request) {
 
       const localMessage =
         localError instanceof Error ? localError.message : "local feed unavailable";
-      console.error("Local feed load failed:", localMessage);
+      logger.error("posts.feed.local_load_failed", { error: localMessage });
       return NextResponse.json({
         posts: [],
         nextCursor: null,
@@ -513,7 +513,9 @@ export async function POST(req: Request) {
       // Lens v3 requires the Lens account address (not wallet address) for posting
       // Look up the user's Lens account address first
       const lensAccountAddress = await getLensAccountAddress(actorAddress);
-      console.log("[Post API] Lens account address:", lensAccountAddress);
+      logger.debug("posts.create.lens_account_resolved", {
+        hasLensAccountAddress: !!lensAccountAddress,
+      });
       
       if (!lensAccountAddress) {
         return NextResponse.json(
@@ -523,7 +525,7 @@ export async function POST(req: Request) {
       }
 
       try {
-        console.log("[Post API] Creating Lens post...");
+        logger.debug("posts.create.lens_post_start");
         const post = await createLensPost({
           content: parsedContent.content,
           actorAddress: lensAccountAddress, // Use Lens account address, not wallet
@@ -543,13 +545,13 @@ export async function POST(req: Request) {
           chainPostId: post.id,
           publishStatus: "published",
         }).catch((mirrorError) => {
-          console.warn("[Post API] Local mirror write failed:", mirrorError);
+          logger.warn("posts.create.local_mirror_failed", { error: mirrorError });
         });
-        console.log("[Post API] Lens post created:", post.id);
+        logger.info("posts.create.lens_post_created", { postId: post.id });
         return NextResponse.json({ success: true, post, source: "lens" });
       } catch (lensError) {
         const errorMsg = lensError instanceof Error ? lensError.message : "unknown error";
-        console.error("[Post API] Lens post mutation failed:", errorMsg);
+        logger.error("posts.create.lens_post_failed", { error: errorMsg });
         
         if (lensError instanceof Error && lensError.name === "LensOnboardingError") {
           // inform client about onboarding requirement

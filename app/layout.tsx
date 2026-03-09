@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Navbar from "@/components/Navbar";
 import Providers from "@/components/Providers";
 import ConsentBanner from "@/components/ConsentBanner";
+import { ensureRuntimeConfig } from "@/lib/server/runtime-config";
 
 export const metadata: Metadata = {
   title: "ChainSocial",
@@ -14,6 +15,8 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  ensureRuntimeConfig();
+
   return (
     <html lang="en">
       <body className="bg-black text-white min-h-screen">

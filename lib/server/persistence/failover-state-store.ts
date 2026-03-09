@@ -1,4 +1,5 @@
 import type { ChainSocialState, StateStore } from "./types";
+import { logger } from "@/lib/server/logger";
 
 type FailoverOptions = {
   cooldownMs?: number;
@@ -32,13 +33,17 @@ export class FailoverStateStore implements StateStore {
     this.openedUntilMs = Date.now() + this.cooldownMs;
     this.warnedInOpenWindow = false;
     const message = reason instanceof Error ? reason.message : String(reason);
-    console.warn(`${this.warnPrefix} Primary backend failed. Falling back for ${this.cooldownMs}ms.`, message);
+    logger.warn("state_store.failover.opened", {
+      prefix: this.warnPrefix,
+      cooldownMs: this.cooldownMs,
+      reason: message,
+    });
   }
 
   private warnOpenWindowOnce() {
     if (this.warnedInOpenWindow) return;
     this.warnedInOpenWindow = true;
-    console.warn(`${this.warnPrefix} Circuit open, using fallback backend.`);
+    logger.warn("state_store.failover.open", { prefix: this.warnPrefix });
   }
 
   async read(): Promise<ChainSocialState | null> {

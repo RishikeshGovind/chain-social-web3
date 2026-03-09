@@ -1,4 +1,5 @@
 import path from "node:path";
+import { ensureRuntimeConfig } from "@/lib/server/runtime-config";
 import { FileStateStore } from "./file-state-store";
 import { FailoverStateStore } from "./failover-state-store";
 import { PostgresStateStore } from "./postgres-state-store";
@@ -21,6 +22,7 @@ function parseBoolean(value: string | undefined, fallback: boolean) {
 
 export function getStateStore(): StateStore {
   if (singleton) return singleton;
+  ensureRuntimeConfig();
 
   const filePath =
     process.env.CHAINSOCIAL_STATE_FILE?.trim() || path.join(process.cwd(), "data", "posts.json");

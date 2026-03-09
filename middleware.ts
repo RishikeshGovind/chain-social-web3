@@ -5,6 +5,9 @@ import {
   getRequestCountry,
 } from "@/lib/server/compliance/policy";
 
+// Maximum allowed request body size (10MB)
+const MAX_BODY_SIZE = 10 * 1024 * 1024;
+
 export function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
@@ -15,6 +18,18 @@ export function middleware(request: NextRequest) {
     pathname.startsWith("/public/")
   ) {
     return NextResponse.next();
+  }
+
+  // Enforce request body size limits for POST/PUT/PATCH requests
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) {
+    const size = parseInt(contentLength, 10);
+    if (!Number.isNaN(size) && size > MAX_BODY_SIZE) {
+      return NextResponse.json(
+        { error: "Request body too large", maxSize: MAX_BODY_SIZE },
+        { status: 413 }
+      );
+    }
   }
 
   const country = getRequestCountry(request.headers);

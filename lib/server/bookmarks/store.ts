@@ -2,12 +2,20 @@ import { normalizeAddress } from "@/lib/posts/content";
 import { fetchLensPostById } from "@/lib/lens/feed";
 import { getPostById } from "@/lib/posts/store";
 import { mergeState, readState } from "@/lib/server/persistence";
+import { bookmarksMutex } from "@/lib/server/mutex";
 import type { PersistedBookmarkRecord } from "@/lib/server/persistence/types";
 
 export type BookmarkRecord = PersistedBookmarkRecord;
 
+// Cache with TTL for memory management
 let cache: BookmarkRecord[] | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 let writeChain = Promise.resolve();
+
+function isCacheValid(): boolean {
+  return cache !== null && Date.now() - cacheTimestamp < CACHE_TTL_MS;
+}
 
 function sortBookmarks(items: BookmarkRecord[]) {
   return [...items].sort((a, b) => {
@@ -30,9 +38,10 @@ function isBookmarkRecord(value: unknown): value is BookmarkRecord {
 }
 
 async function loadStore(): Promise<BookmarkRecord[]> {
-  if (cache) return cache;
+  if (isCacheValid()) return cache!;
   const state = await readState();
   cache = sortBookmarks(Array.isArray(state.bookmarks) ? state.bookmarks.filter(isBookmarkRecord) : []);
+  cacheTimestamp = Date.now();
   return cache;
 }
 
@@ -53,32 +62,36 @@ export async function listBookmarkIds(ownerAddress: string) {
 }
 
 export async function toggleBookmark(ownerAddress: string, postId: string) {
-  const owner = normalizeAddress(ownerAddress);
-  const store = await loadStore();
-  const existingIndex = store.findIndex(
-    (bookmark) => bookmark.ownerAddress === owner && bookmark.postId === postId
-  );
+  // Use mutex to prevent race conditions with concurrent bookmark operations
+  return bookmarksMutex.withLock(async () => {
+    const owner = normalizeAddress(ownerAddress);
+    const store = await loadStore();
+    const existingIndex = store.findIndex(
+      (bookmark) => bookmark.ownerAddress === owner && bookmark.postId === postId
+    );
 
-  let bookmarked = false;
-  if (existingIndex >= 0) {
-    store.splice(existingIndex, 1);
-  } else {
-    store.unshift({
-      id: crypto.randomUUID(),
-      ownerAddress: owner,
-      postId,
-      createdAt: new Date().toISOString(),
-    });
-    bookmarked = true;
-  }
+    let bookmarked = false;
+    if (existingIndex >= 0) {
+      store.splice(existingIndex, 1);
+    } else {
+      store.unshift({
+        id: crypto.randomUUID(),
+        ownerAddress: owner,
+        postId,
+        createdAt: new Date().toISOString(),
+      });
+      bookmarked = true;
+    }
 
-  cache = sortBookmarks(store);
-  await saveStore(cache);
-  return {
-    bookmarked,
-    items: cache.filter((bookmark) => bookmark.ownerAddress === owner),
-    ids: cache.filter((bookmark) => bookmark.ownerAddress === owner).map((bookmark) => bookmark.postId),
-  };
+    cache = sortBookmarks(store);
+    cacheTimestamp = Date.now();
+    await saveStore(cache);
+    return {
+      bookmarked,
+      items: cache.filter((bookmark) => bookmark.ownerAddress === owner),
+      ids: cache.filter((bookmark) => bookmark.ownerAddress === owner).map((bookmark) => bookmark.postId),
+    };
+  });
 }
 
 export async function resolveBookmarkedPosts(ownerAddress: string, accessToken?: string) {

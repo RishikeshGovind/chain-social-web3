@@ -3,6 +3,7 @@
 import { lensRequest } from "../lens";
 import { normalizeAddress } from "../posts/content";
 import type { Post, Reply } from "../posts/types";
+import { logger } from "@/lib/server/logger";
 import { lookup } from "node:dns/promises";
 import * as net from "node:net";
 
@@ -1153,7 +1154,7 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
 
   for (const variant of QUERY_VARIANTS) {
     try {
-      console.log("[Lens] Attempting query with variant...");
+      logger.debug("lens.feed.query_variant");
       if (normalizedAuthor) {
         const collected: Post[] = [];
         const seenIds = new Set<string>();
@@ -1191,9 +1192,9 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
       }
 
       const data = await lensRequest(variant.query, variant.variables(input), input.accessToken);
-      console.log("[Lens] Query successful, extracting posts...", data);
+      logger.debug("lens.feed.query_success", { hasData: !!data });
       const extracted = await extractPosts(data, input.debug);
-      console.log("[Lens] Extracted posts:", extracted.items.length, "items");
+      logger.debug("lens.feed.posts_extracted", { count: extracted.items.length });
       return {
         // Lens PageSize is enum-based (TEN/FIFTY). When requesting limit=20,
         // the API page is often FIFTY; slicing to 20 while using the FIFTY cursor
@@ -1204,12 +1205,12 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Lens query failed";
-      console.warn("[Lens] Query failed:", msg);
+      logger.warn("lens.feed.query_failed", { error: msg });
       errors.push(msg);
     }
   }
 
-  console.error("[Lens] All query variants failed:", errors);
+  logger.error("lens.feed.query_all_failed", { errors });
   throw new Error(errors.join(" | "));
 }
 

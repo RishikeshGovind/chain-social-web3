@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { normalizeAddress } from "@/lib/posts/content";
 
@@ -16,24 +16,48 @@ type ProfilesStore = Record<string, ProfileRecord>;
 const DATA_DIR = path.join(process.cwd(), "data");
 const PROFILES_FILE = path.join(DATA_DIR, "profiles.json");
 
+// Cache with TTL for memory management
 let cache: ProfilesStore | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 let writeChain = Promise.resolve();
 
+function isCacheValid(): boolean {
+  return cache !== null && Date.now() - cacheTimestamp < CACHE_TTL_MS;
+}
+
 async function loadStore(): Promise<ProfilesStore> {
-  if (cache) return cache;
+  if (isCacheValid()) return cache!;
   try {
     const raw = await readFile(PROFILES_FILE, "utf8");
     const parsed = JSON.parse(raw) as ProfilesStore;
     cache = parsed && typeof parsed === "object" ? parsed : {};
+    cacheTimestamp = Date.now();
   } catch {
     cache = {};
+    cacheTimestamp = Date.now();
   }
   return cache;
 }
 
 async function persist(store: ProfilesStore) {
   await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(PROFILES_FILE, JSON.stringify(store, null, 2), "utf8");
+  
+  // Atomic write: write to temp file first, then rename
+  const tempPath = path.join(DATA_DIR, `.profiles.json.tmp.${Date.now()}`);
+  try {
+    await writeFile(tempPath, JSON.stringify(store, null, 2), "utf8");
+    await rename(tempPath, PROFILES_FILE);
+  } catch (error) {
+    // Clean up temp file on error
+    try {
+      const { unlink } = await import("node:fs/promises");
+      await unlink(tempPath);
+    } catch {
+      // Ignore cleanup errors
+    }
+    throw error;
+  }
 }
 
 async function saveStore(store: ProfilesStore) {

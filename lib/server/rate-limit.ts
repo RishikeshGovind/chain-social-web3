@@ -1,4 +1,5 @@
 import { normalizeAddress } from "@/lib/posts/content";
+import { ensureRuntimeConfig } from "@/lib/server/runtime-config";
 
 type RateLimitResult =
   | { ok: true }
@@ -18,24 +19,44 @@ const localWindowState = new Map<string, LocalState>();
 type UpstashResult = { result?: unknown };
 
 function getUpstashConfig() {
+  ensureRuntimeConfig();
   const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
   const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
   if (!url || !token) return null;
-  return { url, token };
+  const timeoutMs = Number.parseInt(process.env.CHAINSOCIAL_UPSTASH_TIMEOUT_MS ?? "2000", 10);
+  return {
+    url,
+    token,
+    timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 2000,
+  };
 }
 
 async function callUpstashPipeline(commands: unknown[][]) {
   const config = getUpstashConfig();
   if (!config) return null;
 
-  const response = await fetch(`${config.url}/pipeline`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(commands),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(`${config.url}/pipeline`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(commands),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Upstash request timed out after ${config.timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     throw new Error(`Upstash request failed with status ${response.status}`);
@@ -169,5 +190,15 @@ export async function checkUploadRateLimit(address: string): Promise<RateLimitRe
     perMinute: 20,
     cooldownError: "Uploading too quickly. Please wait a moment.",
     windowError: "Upload rate limit reached. Please try again shortly.",
+  });
+}
+
+export async function checkMessageRateLimit(address: string): Promise<RateLimitResult> {
+  return checkRateLimit(address, {
+    keyPrefix: "message",
+    cooldownMs: 750,
+    perMinute: 40,
+    cooldownError: "Sending messages too quickly. Please wait a moment.",
+    windowError: "Message rate limit reached. Try again in a minute.",
   });
 }

@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
+import Image from "next/image";
 import Link from "next/link";
 import { clearDeduplicationCache, deduplicatedRequest } from "@/lib/request-deduplicator";
 import { retryWithBackoff } from "@/lib/retry-backoff";
-import { compressImages, getFileSize, getCompressionRatio } from "@/lib/image-compression";
+import { compressImages } from "@/lib/image-compression";
 import { BOOKMARKS_CHANGED_EVENT, loadBookmarks, readBookmarks, toggleBookmarkId } from "@/lib/client/bookmarks";
 import { hasFunctionalConsent } from "@/lib/client/consent";
 import { useUserSettings } from "@/lib/client/settings";
@@ -249,24 +250,18 @@ export default function FeedPage() {
       return;
     }
 
-    console.log("[Lens] Checking session...");
     fetch("/api/lens/session", { credentials: "include", cache: "no-store" })
       .then(res => res.json())
       .then(data => {
-        console.log("[Lens] Session check result:", data);
         if (data.authenticated) {
           setIsLensAuthenticated(true);
           setLensAuthHint("1");
-          console.log("[Lens] Session restored successfully");
         } else {
           setLensAuthHint(null);
           setIsLensAuthenticated(false);
-          console.log("[Lens] No valid session found, reason:", data.reason);
         }
       })
-      .catch(err => {
-        console.warn("[Lens] Session check failed:", err);
-      })
+      .catch(() => undefined)
       .finally(() => {
         setCheckingLensSession(false);
       });
@@ -324,7 +319,7 @@ export default function FeedPage() {
       
       // Show Lens fallback warning if we fell back to local store
       if (data.source === "local" && data.lensFallbackError) {
-        console.warn("Using local store instead of Lens. Error:", data.lensFallbackError);
+        setError((current) => current ?? "Using the local fallback feed right now.");
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to load feed";
@@ -398,8 +393,7 @@ export default function FeedPage() {
           method: 'personal_sign',
           params: [challengeText, viewerAddress],
         }) as string;
-      } catch (err) {
-        console.warn("Signing failed:", err);
+      } catch {
         throw new Error("Failed to sign with wallet. Please approve the signing request.");
       }
 
@@ -420,7 +414,6 @@ export default function FeedPage() {
         throw new Error(errorData.error || "Failed to authenticate with Lens");
       }
 
-      console.log("[Lens] Authentication successful!");
       setIsLensAuthenticated(true);
       setLensAuthHint("1");
     } catch (err) {
@@ -466,12 +459,6 @@ export default function FeedPage() {
         });
 
         // Log compression stats
-        const originalSize = mediaFiles.reduce((sum, f) => sum + f.size, 0);
-        const compressedSize = compressedFiles.reduce((sum, f) => sum + f.size, 0);
-        console.log(
-          `Compressed images: ${getFileSize(originalSize)} → ${getFileSize(compressedSize)} (${getCompressionRatio(originalSize, compressedSize).toFixed(1)}% reduction)`
-        );
-
         const uploadPromises = compressedFiles.map(async (file) => {
           // Dynamically import IPFS helper
           const { uploadToIPFS } = await import("@/lib/ipfs");
@@ -515,17 +502,14 @@ export default function FeedPage() {
           credentials: "include",
         });
         const data = await res.json();
-        console.log("[Post] Response:", res.status, data);
 
         // If we get an auth error, try refreshing the token once
         if ((res.status === 401 || (data.error && data.error.includes("Unauthenticated"))) && retryCount === 0) {
-          console.log("[Post] Auth error, attempting token refresh...");
           const refreshRes = await fetch("/api/lens/refresh", {
             method: "POST",
             credentials: "include",
           });
           if (refreshRes.ok) {
-            console.log("[Post] Token refreshed, retrying post...");
             return postWithRetry(1);
           } else {
             // Refresh failed, user needs to reconnect
@@ -548,12 +532,10 @@ export default function FeedPage() {
       const returnedPost = data.post as Post;
       setPosts((prev) => prev.map((post) => (post.id === tempId ? { ...returnedPost, optimistic: false } : post)));
       clearDeduplicationCache();
-      console.log("[Post] Successfully created post:", returnedPost?.id);
       
     } catch (e) {
       setPosts((prev) => prev.filter((post) => post.id !== tempId));
       const message = e instanceof Error ? e.message : "Failed to publish post";
-      console.error("[Post] Failed:", message);
       setError(message);
     } finally {
       setSubmitting(false);
@@ -1112,10 +1094,13 @@ export default function FeedPage() {
                     {mediaPreview.length > 0 && (
                       <div className="mb-3 flex flex-wrap gap-2">
                         {mediaPreview.map((url, idx) => (
-                          <img
+                          <Image
                             key={idx}
                             src={url}
                             alt="preview"
+                            width={80}
+                            height={80}
+                            unoptimized
                             className="h-20 w-20 rounded-2xl border border-white/10 object-cover"
                           />
                         ))}
@@ -1231,9 +1216,12 @@ export default function FeedPage() {
                   <div className="min-w-0">
                     <div className="mb-4 flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-start gap-3">
-                        <img
+                        <Image
                           src={`https://api.dicebear.com/7.x/bottts/svg?seed=${post.author.address}`}
                           alt="cute avatar"
+                          width={40}
+                          height={40}
+                          unoptimized
                           className="mt-0.5 h-10 w-10 rounded-full border border-white/10 bg-white object-cover shadow-sm"
                         />
                         <div className="min-w-0">

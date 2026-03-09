@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { ensureRuntimeConfig } from "@/lib/server/runtime-config";
 
 export type MediaStorage = {
   putImage(input: { data: Buffer; mimeType: string; extension: string }): Promise<string>;
@@ -44,6 +45,7 @@ let singleton: MediaStorage | null = null;
 
 export function getMediaStorage(): MediaStorage {
   if (singleton) return singleton;
+  ensureRuntimeConfig();
 
   const backend = (process.env.CHAINSOCIAL_MEDIA_BACKEND ?? "local").trim().toLowerCase();
   if (backend === "remote") {

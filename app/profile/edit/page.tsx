@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
@@ -268,13 +269,16 @@ export default function EditProfilePage() {
               </button>
             </div>
             <div className="flex items-center gap-3">
-              <img
+              <Image
                 src={
                   avatarMode === "dicebear"
                     ? buildDicebearUrl(dicebearSeed || "avatar")
                     : (avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=avatar")
                 }
                 alt="avatar preview"
+                width={64}
+                height={64}
+                unoptimized
                 className="w-16 h-16 rounded-full border border-gray-700 bg-white object-cover"
               />
               {avatarMode === "dicebear" ? (
@@ -333,9 +337,9 @@ export default function EditProfilePage() {
           <div className="mb-6">
             <label className="block mb-2 text-gray-300">Banner Image</label>
             <div className="space-y-3">
-              <div className="h-24 w-full rounded-lg border border-gray-700 bg-black overflow-hidden">
+              <div className="relative h-24 w-full overflow-hidden rounded-lg border border-gray-700 bg-black">
                 {coverImage ? (
-                  <img src={coverImage} alt="banner preview" className="w-full h-full object-cover" />
+                  <Image src={coverImage} alt="banner preview" fill unoptimized className="object-cover" />
                 ) : (
                   <div className="w-full h-full bg-gradient-to-r from-blue-900 to-purple-900" />
                 )}

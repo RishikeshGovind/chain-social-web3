@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { isValidAddress, normalizeAddress } from "@/lib/posts/content";
 import { getFollowStats } from "@/lib/posts/store";
 import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
+import { logger } from "@/lib/server/logger";
 import { isPrimaryStateStoreHealthy } from "@/lib/server/persistence";
 
 const FOLLOW_STATS_TIMEOUT_MS = Number.parseInt(
-  process.env.CHAINSOCIAL_FOLLOWS_TIMEOUT_MS ?? "1200",
+  process.env.CHAINSOCIAL_FOLLOWS_TIMEOUT_MS ?? "2500",
   10
 );
 
@@ -45,17 +46,20 @@ export async function GET(
           getFollowStats(targetAddress, actorAddress ?? undefined),
           Number.isFinite(FOLLOW_STATS_TIMEOUT_MS) && FOLLOW_STATS_TIMEOUT_MS > 0
             ? FOLLOW_STATS_TIMEOUT_MS
-            : 1200,
+            : 2500,
           "follow stats read"
         );
       } catch (statsError) {
         degraded = true;
         const message = statsError instanceof Error ? statsError.message : "unknown error";
-        console.warn("[Follows API] Returning degraded follow stats:", message);
+        logger.warn("follows_api.degraded", { address: targetAddress, reason: message });
       }
     } else {
       degraded = true;
-      console.warn("[Follows API] Returning degraded follow stats: primary state store unhealthy.");
+      logger.warn("follows_api.degraded", {
+        address: targetAddress,
+        reason: "primary state store unhealthy",
+      });
     }
 
     return NextResponse.json({

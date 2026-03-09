@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isValidAddress, normalizeAddress } from "@/lib/posts/content";
 import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
+import { checkMessageRateLimit } from "@/lib/server/rate-limit";
 import {
   listConversation,
   listConversations,
@@ -8,6 +9,18 @@ import {
   sendDirectMessage,
 } from "@/lib/server/messages/store";
 import { createNotification } from "@/lib/server/notifications/store";
+import { logger } from "@/lib/server/logger";
+
+async function parseJsonBody(req: Request): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
+  try {
+    const body = await req.json();
+    return { ok: true, body };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid JSON";
+    logger.warn("messages.json_parse_failed", { error: message });
+    return { ok: false, error: "Invalid JSON body" };
+  }
+}
 
 async function getActor() {
   const actorAddress = await getActorAddressFromLensCookie();
@@ -59,7 +72,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json().catch(() => ({}));
+  const rateLimit = await checkMessageRateLimit(actor);
+  if (!rateLimit.ok) {
+    const retryAfterSeconds = Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1000));
+    return NextResponse.json(
+      { error: rateLimit.error },
+      { status: 429, headers: { "Retry-After": `${retryAfterSeconds}` } }
+    );
+  }
+
+  const parsed = await parseJsonBody(req);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+  const body = parsed.body as Record<string, unknown>;
   const recipientAddress =
     typeof body?.recipientAddress === "string" ? normalizeAddress(body.recipientAddress) : "";
 
@@ -72,6 +98,8 @@ export async function POST(req: Request) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
+
+  logger.info("messages.sent", { actor, recipientAddress });
 
   await createNotification({
     type: "message",

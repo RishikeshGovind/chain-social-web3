@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { lensRequest } from "@/lib/lens";
+import { logger } from "@/lib/server/logger";
 import {
   getActorAddressFromLensToken,
   isTokenExpired,
@@ -25,7 +26,10 @@ export async function GET() {
     let refreshToken = cookieStore.get("lensRefreshToken")?.value ?? null;
     let refreshed = false;
 
-    console.log("[Session] Checking cookies - accessToken exists:", !!accessToken, "refreshToken exists:", !!refreshToken);
+    logger.debug("lens.session.check", {
+      hasAccessToken: !!accessToken,
+      hasRefreshToken: !!refreshToken,
+    });
 
     const refreshIfPossible = async () => {
       if (!refreshToken) {
@@ -130,7 +134,7 @@ export async function GET() {
     }
     return response;
   } catch (error) {
-    console.error("Session check error:", error);
+    logger.error("lens.session.error", { error });
     return NextResponse.json({ authenticated: false, reason: "error" });
   }
 }

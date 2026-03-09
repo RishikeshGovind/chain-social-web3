@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { lensRequest } from "@/lib/lens";
+import { logger } from "@/lib/server/logger";
 
 type AuthChallengeResponse = {
   challenge: {
@@ -82,7 +83,7 @@ export async function POST(req: Request) {
 
     // First, check if user has a Lens account (profile)
     const lensAccount = await getUserLensAccount(address);
-    console.log("[Lens Auth] User Lens account:", lensAccount ?? "none (onboarding)");
+    logger.debug("lens.auth.account_lookup", { hasLensAccount: !!lensAccount });
 
     let challengeData: AuthChallengeResponse | null = null;
     const errors: string[] = [];
@@ -112,7 +113,7 @@ export async function POST(req: Request) {
           });
           if (data.challenge?.text) {
             challengeData = data;
-            console.log("[Lens Auth] Got accountOwner challenge");
+            logger.debug("lens.auth.challenge.account_owner");
             break;
           }
         } catch (error) {
@@ -133,7 +134,7 @@ export async function POST(req: Request) {
         });
         if (data.challenge?.text) {
           challengeData = data;
-          console.log("[Lens Auth] Got onboardingUser challenge");
+          logger.debug("lens.auth.challenge.onboarding_user");
         }
       } catch (error) {
         errors.push(error instanceof Error ? error.message : "onboarding challenge failed");
@@ -150,7 +151,7 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Lens auth error";
-    console.error("Lens auth error:", message);
+    logger.error("lens.auth.error", { error: message });
     return NextResponse.json(
       { error: message },
       { status: 500 }

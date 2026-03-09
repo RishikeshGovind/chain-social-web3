@@ -13,7 +13,8 @@ type AppShellProps = {
     | "Bookmarks"
     | "Lists"
     | "Settings"
-    | "Profile";
+    | "Profile"
+    | "Help";
   children: ReactNode;
   rightSidebar?: ReactNode;
 };
@@ -31,6 +32,7 @@ export default function AppShell({ active, children, rightSidebar }: AppShellPro
     { label: "Lists", href: "/lists" },
     ...(profileHref ? [{ label: "Profile" as const, href: profileHref }] : []),
     { label: "Settings", href: "/settings" },
+    { label: "Help", href: "/help" },
   ];
 
   return (

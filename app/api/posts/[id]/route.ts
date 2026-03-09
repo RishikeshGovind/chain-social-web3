@@ -5,6 +5,7 @@ import {
 } from "@/lib/posts/content";
 import { deletePost, editPost } from "@/lib/posts/store";
 import { deleteLensPost, editLensPost } from "@/lib/lens/writes";
+import { logger } from "@/lib/server/logger";
 import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
@@ -59,7 +60,7 @@ export async function PATCH(
         });
       } catch (lensError) {
         const message = lensError instanceof Error ? lensError.message : "unknown error";
-        console.warn("Lens edit mutation failed:", message);
+        logger.warn("posts.edit.lens_failed", { error: message });
         return NextResponse.json(
           { error: `Lens edit failed: ${message}. Edit was not published to Lens.` },
           { status: 502 }
@@ -118,7 +119,7 @@ export async function DELETE(
         return NextResponse.json({ success: true, source: "lens" });
       } catch (lensError) {
         const message = lensError instanceof Error ? lensError.message : "unknown error";
-        console.warn("Lens delete mutation failed:", message);
+        logger.warn("posts.delete.lens_failed", { error: message });
         return NextResponse.json(
           { error: `Lens delete failed: ${message}. Delete was not published to Lens.` },
           { status: 502 }

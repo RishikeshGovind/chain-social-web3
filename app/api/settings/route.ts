@@ -6,6 +6,18 @@ import {
   getUserSettings,
   upsertUserSettings,
 } from "@/lib/server/settings/store";
+import { logger } from "@/lib/server/logger";
+
+async function parseJsonBody(req: Request): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
+  try {
+    const body = await req.json();
+    return { ok: true, body };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid JSON";
+    logger.warn("settings.json_parse_failed", { error: message });
+    return { ok: false, error: "Invalid JSON body" };
+  }
+}
 
 async function getActor() {
   const actorAddress = await getActorAddressFromLensCookie();
@@ -41,7 +53,11 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const parsed = await parseJsonBody(req);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+  const body = parsed.body as Record<string, unknown>;
   const updates = {
     compactFeed:
       typeof body.compactFeed === "boolean" ? body.compactFeed : undefined,
@@ -56,6 +72,7 @@ export async function PATCH(req: Request) {
   }
 
   const settings = await upsertUserSettings(actor, updates);
+  logger.info("settings.updated", { actor });
   return NextResponse.json({
     actor,
     settings,

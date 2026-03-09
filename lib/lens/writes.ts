@@ -4,6 +4,7 @@ import { lensRequest } from "../lens";
 import { normalizeAddress } from "../posts/content";
 import type { Post, Reply } from "../posts/types";
 import { randomUUID } from "node:crypto";
+import { logger } from "@/lib/server/logger";
 
 type MutationVariant = {
   query: string;
@@ -166,13 +167,13 @@ export async function createLensPost(params: {
       params.media
     );
     // Avoid logging full data URI payloads (large + user content); log shape only.
-    console.log("[Lens] createPost request:", {
+    logger.debug("lens.create_post.request", {
       hasContentUri: typeof requestBody.contentUri === "string",
       contentUriLength:
         typeof requestBody.contentUri === "string" ? requestBody.contentUri.length : 0,
       hasMedia: !!params.media?.length,
     });
-    console.log("[Lens] createPost actorAddress:", params.actorAddress);
+    logger.debug("lens.create_post.actor", { actorAddress: params.actorAddress });
 
     // simulate before making network call (tests only)
     maybeSimulateOnboarding(params.content);
@@ -204,7 +205,11 @@ export async function createLensPost(params: {
     );
 
     const result = extractFirstResult(data);
-    console.log("[Lens] Post result:", JSON.stringify(result, null, 2));
+    logger.debug("lens.create_post.result", {
+      typename: getGraphQLTypename(result),
+      hasHash: !!asString(result?.hash),
+      hasReason: !!asString(result?.reason),
+    });
     
     const typename = getGraphQLTypename(result);
     const reason = asString(result?.reason);
@@ -242,7 +247,7 @@ export async function createLensPost(params: {
 
     return post;
   } catch (error) {
-    console.error("Lens post mutation failed:", error);
+    logger.error("lens.create_post.failed", { error });
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("ONBOARDING_USER")) {
       // try to refresh/switch account and retry once, since token may reflect
@@ -284,7 +289,7 @@ export async function createLensPost(params: {
           replyCount: 0,
         } as Post;
       } catch (retryError) {
-        console.warn("retry after switch failed", retryError);
+        logger.warn("lens.create_post.retry_after_switch_failed", { error: retryError });
       }
       // if retry didn't succeed, surface original onboarding error
       throw new LensOnboardingError(msg);

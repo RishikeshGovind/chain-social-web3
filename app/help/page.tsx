@@ -1,18 +1,55 @@
 import Link from "next/link";
+import AppShell from "@/components/AppShell";
+
+const safetyPoints = [
+  "Wallet login proves account ownership by signing a message. It does not move funds.",
+  "ChainSocial never asks for your private key or seed phrase.",
+  "Only approve signatures you expect, and double-check the site URL before signing.",
+];
 
 export default function HelpPage() {
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-8">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 max-w-lg w-full">
-        <h2 className="text-2xl font-semibold mb-4">Wallet Login Safety</h2>
-        <p className="mb-4">Wallet login lets you securely access ChainSocial without passwords. You only sign a message to prove ownership—your funds are never at risk, and we never ask for private keys or transactions.</p>
-        <ul className="mb-4 list-disc pl-6 text-gray-300">
-          <li>Supported wallets: MetaMask, Coinbase, WalletConnect</li>
-          <li>Signing is free and does not move funds</li>
-          <li>Never share your private key or seed phrase</li>
-        </ul>
-        <Link href="/feed" className="text-blue-400 hover:underline">Back to Feed</Link>
+    <AppShell active="Help">
+      <div className="w-full max-w-3xl text-white">
+        <section className="animate-fade-up rounded-[2.25rem] border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur sm:p-8">
+          <p className="mb-3 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-[11px] uppercase tracking-[0.28em] text-cyan-200">
+            Help
+          </p>
+          <h1 className="text-3xl font-black uppercase leading-none tracking-[-0.05em] text-white sm:text-5xl">
+            Wallet login should feel clear, not risky.
+          </h1>
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-gray-300 sm:text-base">
+            You sign a message to prove you control your wallet. That signature acts like a login,
+            not a payment.
+          </p>
+        </section>
+
+        <div className="mt-6 grid gap-4">
+          {safetyPoints.map((point) => (
+            <div
+              key={point}
+              className="animate-fade-up rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-5 text-sm leading-6 text-gray-200 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur"
+            >
+              {point}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Link
+            href="/feed"
+            className="rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-gray-200"
+          >
+            Back to feed
+          </Link>
+          <Link
+            href="/legal/privacy"
+            className="rounded-full border border-white/10 px-5 py-2.5 text-sm text-gray-200 transition hover:bg-white/[0.06]"
+          >
+            Privacy details
+          </Link>
+        </div>
       </div>
-    </div>
+    </AppShell>
   );
 }
