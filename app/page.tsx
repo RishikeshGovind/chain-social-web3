@@ -15,10 +15,22 @@ const featureCards = [
   },
 ];
 
-const launchPoints = [
-  "No app password flow. You connect a wallet to enter.",
-  "Your public posts are built for openness, while inbox and utility features stay fast and practical inside the app.",
-  "The experience is designed to feel familiar even if you have never touched crypto before.",
+const whyChainsocialPoints = [
+  {
+    eyebrow: "No Passwords",
+    title: "Wallet access instead of account sprawl",
+    body: "You connect your wallet and sign in, without creating another password to remember or another password database to trust.",
+  },
+  {
+    eyebrow: "Clear Boundaries",
+    title: "Public where it should be, private where it matters",
+    body: "Public posting stays open, while messages, bookmarks, lists, and settings remain fast, practical app features.",
+  },
+  {
+    eyebrow: "Familiar UX",
+    title: "Made for people new to web3",
+    body: "The product is designed to feel like modern social software first, not like a crypto puzzle you have to learn before using it.",
+  },
 ];
 
 export default function HomePage() {
@@ -38,9 +50,9 @@ export default function HomePage() {
                 Launch Build
               </p>
               <h1 className="max-w-4xl text-5xl font-black uppercase leading-none tracking-[-0.05em] text-white sm:text-6xl lg:text-7xl">
-                Private by default.
+                Welcome to ChainSocial!!!
                 <br />
-                Open when you choose.
+                Social media, reimagined for you.
               </h1>
               <p className="mt-6 max-w-2xl text-base leading-7 text-gray-300 sm:text-lg">
                 ChainSocial is a social product for people who want more control over identity, privacy, and ownership without giving up the features that make an app usable every day:
@@ -50,7 +62,7 @@ export default function HomePage() {
               <div className="mt-8 flex flex-wrap gap-3">
                 <Link
                   href="/feed"
-                  className="rounded-full bg-white px-6 py-3 text-sm font-semibold text-black transition hover:bg-gray-200"
+                  className="rounded-full bg-gradient-to-r from-cyan-400 via-lime-400 to-yellow-300 px-8 py-4 text-lg font-bold text-black shadow-lg transition hover:scale-105 hover:shadow-xl animate-pulse focus:outline-none focus:ring-4 focus:ring-cyan-400"
                 >
                   Enter the feed
                 </Link>
@@ -70,6 +82,9 @@ export default function HomePage() {
                   <span className="rounded-full bg-black/40 px-3 py-1 text-xs text-lime-200">
                     Live product
                   </span>
+                </div>
+                <div className="mb-4 rounded-xl border border-cyan-400/20 bg-black/30 p-4 text-sm font-semibold text-cyan-200">
+                  The name <span className="font-bold text-white">ChainSocial</span> comes from our vision: all data is stored on the blockchain. Your posts, identity, and activity are transparently and securely recorded, giving you true ownership and control.
                 </div>
                 <div className="space-y-4">
                   <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
@@ -112,22 +127,59 @@ export default function HomePage() {
             ))}
           </section>
 
-          <section className="grid gap-6 rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.06] to-white/[0.02] p-6 lg:grid-cols-[0.9fr_1.1fr] lg:p-8">
+          <section className="grid gap-8 rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-transparent p-6 lg:grid-cols-[0.92fr_1.08fr] lg:p-8">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-cyan-200">What to expect</p>
+              <p className="text-xs uppercase tracking-[0.24em] text-cyan-200">Why ChainSocial?</p>
               <h2 className="mt-3 text-3xl font-semibold text-white sm:text-4xl">
-                Built like a real launch product, not a demo page.
+                A social product with clearer ownership, cleaner privacy boundaries, and a friendlier first run.
               </h2>
-            </div>
-            <div className="space-y-3">
-              {launchPoints.map((point) => (
-                <div
-                  key={point}
-                  className="rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-sm leading-6 text-gray-200"
-                >
-                  {point}
+              <p className="mt-4 max-w-xl text-sm leading-7 text-gray-300 sm:text-base">
+                ChainSocial is built to feel approachable on day one while still giving you more control than traditional social apps.
+              </p>
+              <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-4">
+                  <p className="text-2xl font-bold text-white">0</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Passwords</p>
                 </div>
-              ))}
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-4">
+                  <p className="text-2xl font-bold text-white">1</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Wallet identity</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-4">
+                  <p className="text-2xl font-bold text-white">3</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Core advantages</p>
+                </div>
+              </div>
+            </div>
+            <div className="relative overflow-hidden rounded-[1.8rem] border border-white/10 bg-black/30 p-4 sm:p-6">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.12),transparent_45%)]" />
+              <div className="absolute left-1/2 top-36 hidden h-[18rem] w-[18rem] -translate-x-1/2 rounded-full border border-dashed border-white/10 lg:block" />
+              <div className="absolute left-1/2 top-24 hidden h-[25rem] w-[25rem] -translate-x-1/2 rounded-full border border-dashed border-cyan-400/10 lg:block" />
+
+              <div className="relative z-10 flex flex-col gap-5">
+                <div className="mx-auto flex w-full max-w-sm flex-col items-center justify-center rounded-[1.75rem] border border-cyan-400/20 bg-gradient-to-br from-cyan-400/16 via-white/[0.05] to-lime-300/10 px-6 py-7 text-center shadow-[0_25px_80px_rgba(6,182,212,0.12)]">
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-cyan-200">Why people stay</p>
+                  <h3 className="mt-3 text-2xl font-semibold text-white">ChainSocial</h3>
+                  <p className="mt-3 text-sm leading-6 text-gray-200">
+                    Built to feel simpler, more trustworthy, and more useful from the first visit.
+                  </p>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {whyChainsocialPoints.map((point, index) => (
+                    <article
+                      key={point.title}
+                      className={`rounded-[1.5rem] border border-white/10 bg-white/[0.05] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur transition hover:border-white/20 hover:bg-white/[0.07] ${
+                        index === 2 ? "lg:col-span-2" : ""
+                      }`}
+                    >
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-cyan-200">{point.eyebrow}</p>
+                      <h4 className="mt-3 text-lg font-semibold text-white">{point.title}</h4>
+                      <p className="mt-3 text-sm leading-6 text-gray-300">{point.body}</p>
+                    </article>
+                  ))}
+                </div>
+              </div>
             </div>
           </section>
         </div>

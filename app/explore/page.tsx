@@ -463,18 +463,43 @@ export default function ExplorePage() {
                   Search the loaded graph, surface active conversations, and scan what is rising right now.
                 </p>
               </div>
-              <div className="grid grid-cols-3 gap-2 sm:max-w-xs">
-                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
-                  <p className="text-xl font-bold text-white">{posts.length}</p>
-                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Loaded</p>
+              <div className="w-full space-y-3 sm:max-w-sm">
+                <div className="overflow-hidden rounded-[1.75rem] border border-cyan-400/15 bg-gradient-to-br from-cyan-400/12 via-white/[0.05] to-lime-300/10 p-4 shadow-[0_20px_70px_rgba(6,182,212,0.08)]">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-200">Discovery state</p>
+                    <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-300">
+                      {query.trim() ? "Filtering" : "Scanning"}
+                    </span>
+                  </div>
+                  <p className="text-sm leading-6 text-gray-200">
+                    Explore ranks active conversation and lets you narrow the loaded graph instantly as you type.
+                  </p>
+                  <div className="mt-4 flex gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_12px_rgba(103,232,249,0.9)]" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-lime-300/80 shadow-[0_0_12px_rgba(190,242,100,0.7)]" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-white/60" />
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
-                  <p className="text-xl font-bold text-white">{ranked.length}</p>
-                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Ranked</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
-                  <p className="text-xl font-bold text-white">{query.trim() ? "Live" : "Open"}</p>
-                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Search</p>
+
+                <div className="grid w-full grid-cols-3 gap-2">
+                  <div className="min-w-0 rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                    <p className="text-xl font-bold text-white">{posts.length}</p>
+                    <p className="mt-1 break-words text-[10px] uppercase leading-tight tracking-[0.12em] text-gray-400">
+                      Loaded
+                    </p>
+                  </div>
+                  <div className="min-w-0 rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                    <p className="text-xl font-bold text-white">{ranked.length}</p>
+                    <p className="mt-1 break-words text-[10px] uppercase leading-tight tracking-[0.12em] text-gray-400">
+                      Ranked
+                    </p>
+                  </div>
+                  <div className="min-w-0 rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                    <p className="text-xl font-bold text-white">{query.trim() ? "Live" : "Open"}</p>
+                    <p className="mt-1 break-words text-[10px] uppercase leading-tight tracking-[0.12em] text-gray-400">
+                      Search
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
