@@ -963,18 +963,43 @@ export default function FeedPage() {
                   Read the live conversation, post from your wallet, and keep the useful parts of a social product close at hand.
                 </p>
               </div>
-              <div className="grid grid-cols-3 gap-2 sm:max-w-xs">
-                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
-                  <p className="text-xl font-bold text-white">{posts.length}</p>
-                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Loaded</p>
+              <div className="w-full space-y-3 sm:max-w-sm">
+                <div className="overflow-hidden rounded-[1.75rem] border border-cyan-400/15 bg-gradient-to-br from-cyan-400/12 via-white/[0.05] to-lime-300/10 p-4 shadow-[0_20px_70px_rgba(6,182,212,0.08)]">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-200">Live feed state</p>
+                    <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-300">
+                      {feedStatus === "ready" ? "Stable" : feedStatus}
+                    </span>
+                  </div>
+                  <p className="text-sm leading-6 text-gray-200">
+                    Public posts are readable immediately, while saving, replying, and posting unlock once your wallet is connected.
+                  </p>
+                  <div className="mt-4 flex gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_12px_rgba(103,232,249,0.9)]" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-lime-300/80 shadow-[0_0_12px_rgba(190,242,100,0.7)]" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-white/60" />
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
-                  <p className="text-xl font-bold text-white">{bookmarkedPostIds.length}</p>
-                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Saved</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
-                  <p className="text-xl font-bold text-white">{authenticated ? "On" : "Off"}</p>
-                  <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Access</p>
+
+                <div className="grid w-full grid-cols-3 gap-2">
+                  <div className="min-w-0 rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                    <p className="text-xl font-bold text-white">{posts.length}</p>
+                    <p className="mt-1 break-words text-[10px] uppercase leading-tight tracking-[0.12em] text-gray-400">
+                      Loaded
+                    </p>
+                  </div>
+                  <div className="min-w-0 rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                    <p className="text-xl font-bold text-white">{bookmarkedPostIds.length}</p>
+                    <p className="mt-1 break-words text-[10px] uppercase leading-tight tracking-[0.12em] text-gray-400">
+                      Saved
+                    </p>
+                  </div>
+                  <div className="min-w-0 rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+                    <p className="text-xl font-bold text-white">{authenticated ? "On" : "Off"}</p>
+                    <p className="mt-1 break-words text-[10px] uppercase leading-tight tracking-[0.12em] text-gray-400">
+                      Access
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1438,7 +1463,7 @@ export default function FeedPage() {
             <p className="text-[11px] uppercase tracking-[0.24em] text-cyan-200">Feed Companion</p>
             <h3 className="mt-2 text-xl font-semibold text-white">Read the room before you post.</h3>
             <p className="mt-2 text-sm leading-6 text-gray-300">
-              This rail keeps the feed readable: search what is already loaded, track the current state of your session, and jump to the policies behind the product.
+              Search what is already loaded, track the live state of this feed, and keep your place in the public conversation.
             </p>
           </div>
 
@@ -1481,46 +1506,24 @@ export default function FeedPage() {
           </div>
 
           <div className="mb-8">
-            <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-gray-300">Session State</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Read Access</p>
-                <p className="mt-2 text-sm font-medium text-white">Open</p>
-                <p className="mt-1 text-xs leading-5 text-gray-400">Anyone can browse the public feed.</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Post Access</p>
-                <p className="mt-2 text-sm font-medium text-white">
-                  {authenticated ? "Connected" : "Idle"}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-gray-400">
-                  {authenticated
-                    ? "Your account can interact where posting access is enabled."
-                    : "Connect a wallet when you want to post, reply, or save."}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="mb-8">
-            <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-gray-300">What Makes This Feed Better</h3>
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-gray-300">Feed Signals</h3>
             <div className="space-y-3 text-sm text-gray-300">
               <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
                 <p className="font-medium text-white">Open by default</p>
                 <p className="mt-2 text-xs leading-5 text-gray-400">
-                  Public reading stays available even if you never connect a wallet.
+                  Anyone can read the public timeline before connecting a wallet.
                 </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                <p className="font-medium text-white">Useful when signed in</p>
+                <p className="font-medium text-white">Search stays local to this view</p>
                 <p className="mt-2 text-xs leading-5 text-gray-400">
-                  Bookmarks, messages, notifications, and preferences become durable once you authenticate.
+                  The rail search scans the posts already loaded into this feed so it stays fast and focused.
                 </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                <p className="font-medium text-white">Clear product boundaries</p>
+                <p className="font-medium text-white">Actions unlock when connected</p>
                 <p className="mt-2 text-xs leading-5 text-gray-400">
-                  The product explains what is public and what is app-managed instead of hiding that behind vague promises.
+                  Posting, replying, saving, and follow actions become available once your account is connected.
                 </p>
               </div>
             </div>
