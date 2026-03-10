@@ -2,9 +2,6 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 import ClientLayout from "./ClientLayout";
-import Navbar from "@/components/Navbar";
-import Providers from "@/components/Providers";
-import ConsentBanner from "@/components/ConsentBanner";
 import { ensureRuntimeConfig } from "@/lib/server/runtime-config";
 
 export const metadata: Metadata = {
