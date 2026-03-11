@@ -1,106 +1,120 @@
 # ChainSocial
 
-ChainSocial is a Next.js app for experimenting with a web3 social feed.
+ChainSocial is a social product built around a simple idea: people should be able to participate online without giving up identity control, privacy clarity, and ownership of their public presence.
 
-## Setup
+It combines wallet-based access, open social publishing, and familiar consumer features such as messages, notifications, bookmarks, lists, and settings. The result is not a crypto demo. It is a launch-shaped social product with a more modern trust model.
 
-1. Install dependencies: `npm install`
-2. Create `.env.local` with:
-   - `NEXT_PUBLIC_PRIVY_APP_ID=<your_privy_app_id>`
-   - `LENS_APP_ADDRESS=<your_lens_app_address>`
-   - `LENS_POSTS_SOURCE=lens`
-   - `CHAINSOCIAL_CHAIN_ONLY_WRITES=true`
-   - `LENS_API_URL=https://api.lens.xyz/graphql` (recommended explicit Lens endpoint)
-   - optional production backends:
-     - `CHAINSOCIAL_STATE_BACKEND=file|postgres`
-     - `DATABASE_URL=<postgres_connection_string>` (required when backend is `postgres`)
-     - optional fail-fast DB settings:
-       - `CHAINSOCIAL_STATE_FAILOVER_TO_FILE=true`
-       - `CHAINSOCIAL_DB_CONNECT_TIMEOUT_MS=2500`
-       - `CHAINSOCIAL_DB_QUERY_TIMEOUT_MS=3000`
-       - `CHAINSOCIAL_DB_OPERATION_TIMEOUT_MS=3500`
-       - `CHAINSOCIAL_DB_FAILOVER_COOLDOWN_MS=30000`
-     - `CHAINSOCIAL_MEDIA_BACKEND=local|remote`
-     - `CHAINSOCIAL_MEDIA_REMOTE_URL=<upload_service_url>` (when media backend is `remote`)
-     - `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (for distributed rate limits)
-3. Start dev server: `npm run dev`
+## The Thesis
 
-## Compliance Controls
+Most social platforms still rely on the same basic tradeoff:
 
-Region-aware compliance enforcement is enabled via `middleware.ts` and env flags in `.env.example`.
+- the platform owns the account system
+- the platform controls distribution and product rules
+- the user gets convenience, but little real portability or transparency
 
-- Global read-only: `CHAINSOCIAL_GLOBAL_READ_ONLY=true`
-- Full country block: `CHAINSOCIAL_BLOCKED_COUNTRIES=IN,CN`
-- Country write block: `CHAINSOCIAL_WRITE_BLOCKED_COUNTRIES=BR`
-- Feature kill switches globally or by country:
-  - `CHAINSOCIAL_DISABLE_<FEATURE>=true`
-  - `CHAINSOCIAL_DISABLE_<FEATURE>_COUNTRIES=US,DE`
+ChainSocial takes a different path.
 
-See:
-- `docs/DATA_CLASSIFICATION_MATRIX.md`
-- `docs/COMPLIANCE_CHECKLIST.md`
+- Identity starts with the user’s wallet rather than a platform-owned username/password database.
+- Public posting is designed for openness rather than lock-in.
+- Utility features that users expect from a real product still exist, but are handled with clear boundaries inside the app.
 
-EU baseline features now included:
-- legal pages: `/legal/privacy`, `/legal/terms`, `/legal/cookies`, `/legal/dsa`
-- DSAR helper endpoints (authenticated): `GET /api/privacy/export`, `DELETE /api/privacy/delete`
-- DSAR intake/status endpoint (authenticated): `POST|GET /api/privacy/request`
-- compliance admin endpoints (require `x-admin-token`):
-  - `GET|PATCH /api/admin/compliance/dsar`
-  - `POST /api/admin/compliance/retention`
-- consent banner for optional local storage categories
+This creates a social experience that feels familiar enough to use immediately, while shifting trust and control in the user’s favor.
 
-Compliance runbooks/templates:
-- `docs/ROPA_TEMPLATE.md`
-- `docs/PROCESSOR_REGISTER_TEMPLATE.md`
-- `docs/TRANSFER_IMPACT_ASSESSMENT_TEMPLATE.md`
-- `docs/DSAR_RUNBOOK.md`
-- `docs/RETENTION_POLICY.md`
-- `docs/INCIDENT_RESPONSE_RUNBOOK.md`
+## What Makes ChainSocial Different
 
-## User Posting (Current Branch)
+### 1. Wallet-first identity
 
-This branch focuses on local user posting and engagement, while keeping Lens auth for identity.
+Users do not create another password account. They connect a wallet and prove ownership through signing.
 
-When `LENS_POSTS_SOURCE=lens`, the backend will attempt Lens first for:
-- feed reads (`GET /api/posts`)
-- post writes (`POST /api/posts`)
-- reactions (`PATCH /api/posts/:id/likes`)
-- replies (`POST /api/posts/:id/replies`)
-- follows (`PATCH /api/follows/:address/toggle`)
-- edit/delete (`PATCH|DELETE /api/posts/:id`)
+That removes a major source of friction and a major source of centralized account risk.
 
-If Lens queries or mutations fail, routes automatically fall back to local store responses where possible.
+### 2. Clear privacy boundaries
 
-### API endpoints
+ChainSocial does not make vague claims about “decentralization” and leave the details hidden.
 
-- `GET /api/posts?limit=10&cursor=<cursor>&author=<wallet>`: cursor-based feed pagination.
-- `POST /api/posts`: create a post (requires `lensAccessToken` cookie).
-- `PATCH /api/posts/:id/likes`: like/unlike a post (requires auth).
-- `GET /api/posts/:id/replies?limit=20&cursor=<cursor>`: paginated replies for a post.
-- `POST /api/posts/:id/replies`: publish a reply.
-- `PATCH /api/posts/:id`: edit your own post.
-- `DELETE /api/posts/:id`: delete your own post.
-- `GET /api/follows/:address`: follower/following counts + viewer follow state.
-- `PATCH /api/follows/:address/toggle`: follow or unfollow a profile.
-- `GET|POST /api/posts/migration`: legacy local UUID migration outbox (authenticated).
-  - `POST` body `{ "action": "enqueue", "limit": 100 }` to enqueue local-only posts.
-  - `POST` body `{ "action": "process", "limit": 25 }` to publish queued posts to Lens.
+The product distinguishes between:
 
-Legacy compatibility route remains available at `app/api/lens/create-post/route.ts`.
+- public social activity that may be distributed or durable
+- app-managed utility data such as messages, bookmarks, notifications, lists, and settings
 
-### Safeguards in place
+That clarity is important for trust, compliance, and mainstream usability.
 
-- Server-side actor derivation from Lens auth cookie.
-- Content sanitization and 280-char cap.
-- Address normalization/validation.
-- Per-wallet posting cooldown and minute-level rate cap.
-- File-backed persistence at `data/posts.json`.
-- Ownership checks for post edit/delete.
-- Threaded replies with reply counts.
-- Follow graph state and profile follow controls.
+### 3. Familiar product behavior
 
-## Useful commands
+The experience is intentionally designed to be understandable even for someone who has never used web3 before.
 
-- `npm run lint`
-- `npx tsc --noEmit`
-- `npm run test:posting`
+Users can:
+
+- browse a global feed
+- explore rising conversations
+- publish posts and replies
+- like, repost, and save content
+- manage messages and notifications
+- curate lists and preferences
+
+The product aims to feel like modern social software first, while quietly changing the ownership and identity model underneath.
+
+## How It Works
+
+At a high level, ChainSocial combines three layers:
+
+### Public social layer
+
+Public posting and social actions can integrate with open social infrastructure, giving user activity a more portable and durable foundation than a traditional closed platform.
+
+### App utility layer
+
+Messages, bookmarks, lists, notifications, and settings are handled as app-managed account features so they remain fast, consistent, and useful across sessions.
+
+### Trust and compliance layer
+
+The product includes:
+
+- privacy export and deletion flows for app-managed data
+- region-aware compliance controls
+- operator/admin controls for retention and rights workflows
+- health checks and deploy verification for production readiness
+
+This matters because a serious social product cannot stop at “it’s on-chain.” It also has to be operable, supportable, and understandable.
+
+## Current Product State
+
+ChainSocial is beyond the concept stage. The current product includes:
+
+- a redesigned public landing page and feed experience
+- backend-backed notifications, messages, bookmarks, lists, and settings
+- Lens-integrated posting, replies, likes, reposts, and follows
+- privacy/legal surfaces and compliance workflows
+- production hardening around config validation, health checks, rate limits, logging, and shared persistence
+
+In other words, the product is already being shaped as something that can be launched, not just prototyped.
+
+## Why This Matters
+
+Social products are still among the most powerful consumer internet businesses because identity, attention, and interaction are deeply compounding.
+
+ChainSocial is interesting because it approaches that market from a different angle:
+
+- lower dependence on platform-owned account systems
+- more explicit privacy and ownership framing
+- open public identity model with app-quality utility features
+- a product story that is easier to explain to users than most web3-native experiences
+
+The opportunity is not just “social on chain.” The opportunity is a cleaner social product architecture that gives users more control without forcing them to sacrifice usability.
+
+## Product Direction
+
+The long-term direction for ChainSocial is to become a trustworthy consumer social product where:
+
+- identity is user-controlled
+- public presence is more portable
+- private utility features stay polished and reliable
+- legal/privacy boundaries are visible instead of hidden
+
+That combination is what gives the project its shape: not pure decentralization theater, and not another fully closed platform, but a practical middle ground that can scale into a real product.
+
+## Copyright
+
+Copyright © 2026 ChainSocial. All rights reserved.
+
+This project and its contents are proprietary. No part of this codebase, product, brand, design, or documentation may be copied, reproduced, modified, distributed, or used without prior written permission from ChainSocial.
