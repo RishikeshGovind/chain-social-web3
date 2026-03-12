@@ -7,6 +7,12 @@ const safetyPoints = [
   "Only approve signatures you expect, and double-check the site URL before signing.",
 ];
 
+const moderationPoints = [
+  "Public posts, replies, profiles, and messages can be reported in-product.",
+  "Image uploads can be held for review before they become public, depending on moderation mode.",
+  "Accounts that spread scams, explicit abuse, harassment, or malware can be hidden or restricted.",
+];
+
 export default function HelpPage() {
   return (
     <AppShell active="Help">
@@ -35,6 +41,17 @@ export default function HelpPage() {
           ))}
         </div>
 
+        <section className="mt-6 rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] backdrop-blur">
+          <p className="text-[11px] uppercase tracking-[0.24em] text-cyan-200">Safety and reporting</p>
+          <div className="mt-4 grid gap-3">
+            {moderationPoints.map((point) => (
+              <div key={point} className="rounded-2xl border border-white/10 bg-black/30 p-4 text-sm leading-6 text-gray-200">
+                {point}
+              </div>
+            ))}
+          </div>
+        </section>
+
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
             href="/feed"
@@ -47,6 +64,12 @@ export default function HelpPage() {
             className="rounded-full border border-white/10 px-5 py-2.5 text-sm text-gray-200 transition hover:bg-white/[0.06]"
           >
             Privacy details
+          </Link>
+          <Link
+            href="/legal/community"
+            className="rounded-full border border-white/10 px-5 py-2.5 text-sm text-gray-200 transition hover:bg-white/[0.06]"
+          >
+            Community rules
           </Link>
         </div>
       </div>

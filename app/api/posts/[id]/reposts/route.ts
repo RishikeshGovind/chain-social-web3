@@ -4,6 +4,7 @@ import { getRepostRecord, toggleRepost, toggleRepostWithPublicationId } from "@/
 import { notifyPostReposted } from "@/lib/server/notifications/helpers";
 import { createLensRepost, deleteLensPost } from "@/lib/lens/writes";
 import { getActorAddressFromLensCookie, getLensAccessTokenFromCookie } from "@/lib/server/auth/lens-actor";
+import { isAddressBanned } from "@/lib/server/moderation/store";
 
 export async function PATCH(
   req: Request,
@@ -16,6 +17,9 @@ export async function PATCH(
         { error: "Unauthorized. Connect Lens before reposting." },
         { status: 401 }
       );
+    }
+    if (await isAddressBanned(actorAddress)) {
+      return NextResponse.json({ error: "Your account is restricted from reposting." }, { status: 403 });
     }
 
     const postId = context.params.id;

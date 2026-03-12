@@ -4,6 +4,13 @@ import { NextResponse } from "next/server";
 import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
 import { isValidAddress, normalizeAddress } from "@/lib/posts/content";
 import { getProfile, setProfile } from "@/lib/profiles/store";
+import {
+  evaluateTextSafety,
+  getPublicTrustProfile,
+  isAddressBanned,
+  isMediaBlockedOrQuarantined,
+  isProfileHidden,
+} from "@/lib/server/moderation/store";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -14,8 +21,12 @@ export async function GET(req: Request) {
   if (!isValidAddress(address)) {
     return NextResponse.json({ error: "Invalid address" }, { status: 400 });
   }
+  if (await isProfileHidden(address)) {
+    return NextResponse.json({ error: "Profile unavailable" }, { status: 404 });
+  }
   const profile = await getProfile(address);
-  return NextResponse.json({ profile });
+  const trust = await getPublicTrustProfile(address);
+  return NextResponse.json({ profile, trust });
 }
 
 export async function POST(req: Request) {
@@ -25,6 +36,12 @@ export async function POST(req: Request) {
 
     if (!actorAddress || !isValidAddress(actorAddress)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (await isAddressBanned(actorAddress)) {
+      return NextResponse.json(
+        { error: "Your account is restricted from updating profile details." },
+        { status: 403 }
+      );
     }
 
     const primaryAddress = normalizeAddress(actorAddress);
@@ -68,6 +85,38 @@ export async function POST(req: Request) {
       coverImage: cleanUrl(body?.coverImage, 512),
       avatar: cleanUrl(body?.avatar, 512),
     };
+    const profileText = [nextProfile.displayName, nextProfile.bio, nextProfile.location, nextProfile.website].join(" ");
+    const safety = await evaluateTextSafety({
+      address: primaryAddress,
+      text: profileText,
+      type: "profile_update",
+    });
+    if (safety.thresholdTriggered) {
+      return NextResponse.json(
+        { error: "Profile editing restricted due to unusual activity. Try again later." },
+        { status: 429 }
+      );
+    }
+    if (safety.decision === "block") {
+      return NextResponse.json(
+        { error: safety.reasons[0] ?? "Profile blocked by safety system." },
+        { status: 400 }
+      );
+    }
+    if (safety.decision === "review") {
+      return NextResponse.json(
+        { error: "Profile update held by automated safety checks. Please revise it and try again." },
+        { status: 400 }
+      );
+    }
+    for (const mediaUrl of [nextProfile.avatar, nextProfile.coverImage]) {
+      if (mediaUrl && (await isMediaBlockedOrQuarantined(mediaUrl))) {
+        return NextResponse.json(
+          { error: "Uploaded media is pending review or unavailable." },
+          { status: 400 }
+        );
+      }
+    }
 
     await setProfile(Array.from(aliases), nextProfile);
 

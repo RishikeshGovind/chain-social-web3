@@ -5,6 +5,11 @@ import { toggleLensFollow } from "@/lib/lens/writes";
 import { notifyFollowed } from "@/lib/server/notifications/helpers";
 import { logger } from "@/lib/server/logger";
 import {
+  evaluateFollowSafety,
+  isAddressBanned,
+  isProfileHidden,
+} from "@/lib/server/moderation/store";
+import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
 } from "@/lib/server/auth/lens-actor";
@@ -21,10 +26,23 @@ export async function PATCH(
         { status: 401 }
       );
     }
+    if (await isAddressBanned(actorAddress)) {
+      return NextResponse.json({ error: "Your account is restricted from following accounts." }, { status: 403 });
+    }
 
     const targetAddress = normalizeAddress(context.params.address || "");
     if (!isValidAddress(targetAddress)) {
       return NextResponse.json({ error: "Invalid address" }, { status: 400 });
+    }
+    if (await isProfileHidden(targetAddress)) {
+      return NextResponse.json({ error: "Profile unavailable" }, { status: 404 });
+    }
+    const followSafety = await evaluateFollowSafety(actorAddress, targetAddress);
+    if (followSafety.thresholdTriggered) {
+      return NextResponse.json(
+        { error: "Following restricted due to unusual activity. Try again later." },
+        { status: 429 }
+      );
     }
 
     const body = await req.json().catch(() => ({}));

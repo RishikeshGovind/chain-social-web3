@@ -5,6 +5,7 @@ import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "
 import { usePrivy } from "@privy-io/react-auth";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
+import ReportButton from "@/components/ReportButton";
 
 type DirectMessage = {
   id: string;
@@ -267,9 +268,19 @@ function MessagesPageContent() {
                           : "border-gray-800 bg-black"
                       }`}
                     >
-                      <p className="mb-1 text-xs text-gray-400">
-                        {mine ? "You" : shortenAddress(message.senderAddress)}
-                      </p>
+                      <div className="mb-1 flex items-start justify-between gap-2">
+                        <p className="text-xs text-gray-400">
+                          {mine ? "You" : shortenAddress(message.senderAddress)}
+                        </p>
+                        {!mine && (
+                          <ReportButton
+                            entityType="message"
+                            entityId={message.id}
+                            targetAddress={message.senderAddress}
+                            compact
+                          />
+                        )}
+                      </div>
                       <p className="whitespace-pre-wrap break-words text-sm text-gray-100">
                         {message.content}
                       </p>

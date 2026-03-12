@@ -57,8 +57,22 @@ export function getStateStore(): StateStore {
   return singleton;
 }
 
+// Deduplicate concurrent readState() calls — only one in-flight at a time.
+// Without this, multiple modules calling readState() simultaneously each open
+// separate Postgres connections, each burning the full timeout before failover.
+let readStateInflight: Promise<ChainSocialState> | null = null;
+
 export async function readState(): Promise<ChainSocialState> {
-  return (await getStateStore().read()) ?? createEmptyState();
+  if (readStateInflight) return readStateInflight;
+  const promise = (async () => {
+    try {
+      return (await getStateStore().read()) ?? createEmptyState();
+    } finally {
+      readStateInflight = null;
+    }
+  })();
+  readStateInflight = promise;
+  return promise;
 }
 
 export async function mergeState(partial: Partial<ChainSocialState>): Promise<void> {

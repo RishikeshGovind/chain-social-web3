@@ -6,6 +6,7 @@ import {
 import { deletePost, editPost } from "@/lib/posts/store";
 import { deleteLensPost, editLensPost } from "@/lib/lens/writes";
 import { logger } from "@/lib/server/logger";
+import { evaluateTextSafety, isAddressBanned } from "@/lib/server/moderation/store";
 import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
@@ -23,6 +24,9 @@ export async function PATCH(
         { status: 401 }
       );
     }
+    if (await isAddressBanned(actorAddress)) {
+      return NextResponse.json({ error: "Your account is restricted from editing posts." }, { status: 403 });
+    }
 
     const postId = context.params.id;
     if (!postId) {
@@ -33,6 +37,29 @@ export async function PATCH(
     const parsedContent = parseAndValidateContent(body?.content);
     if (!parsedContent.ok) {
       return NextResponse.json({ error: parsedContent.error }, { status: 400 });
+    }
+    const safety = await evaluateTextSafety({
+      address: actorAddress,
+      text: parsedContent.content,
+      type: "post",
+    });
+    if (safety.thresholdTriggered) {
+      return NextResponse.json(
+        { error: "Editing restricted due to unusual activity. Try again later." },
+        { status: 429 }
+      );
+    }
+    if (safety.decision === "block") {
+      return NextResponse.json(
+        { error: safety.reasons[0] ?? "Post edit blocked by safety system." },
+        { status: 400 }
+      );
+    }
+    if (safety.decision === "review") {
+      return NextResponse.json(
+        { error: "Post edit held by automated safety checks. Please revise it and try again." },
+        { status: 400 }
+      );
     }
 
     const useLensData =

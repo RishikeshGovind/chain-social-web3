@@ -8,6 +8,7 @@ import { BOOKMARKS_CHANGED_EVENT, toggleBookmarkId } from "@/lib/client/bookmark
 import AppShell from "@/components/AppShell";
 import { useUserSettings } from "@/lib/client/settings";
 import PostMedia from "@/components/PostMedia";
+import ReportButton from "@/components/ReportButton";
 
 type Post = {
   id: string;
@@ -186,12 +187,20 @@ export default function BookmarksPage() {
                     <div className="mt-1 text-xs text-gray-500">{new Date(post.timestamp).toLocaleString()}</div>
                   </div>
                 </div>
-                <button
-                  onClick={() => void handleUnbookmark(post.id)}
-                  className="rounded-full border border-yellow-400/20 px-3 py-1.5 text-xs text-yellow-200 transition hover:bg-yellow-400/10"
-                >
-                  Remove
-                </button>
+                <div className="flex items-center gap-2">
+                  <ReportButton
+                    entityType="post"
+                    entityId={post.id}
+                    targetAddress={post.author.address}
+                    compact
+                  />
+                  <button
+                    onClick={() => void handleUnbookmark(post.id)}
+                    className="rounded-full border border-yellow-400/20 px-3 py-1.5 text-xs text-yellow-200 transition hover:bg-yellow-400/10"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
 
               <div className={`mb-4 whitespace-pre-wrap break-words text-gray-100 ${settings.compactFeed ? "text-sm leading-6" : "text-[15px] leading-7"}`}>

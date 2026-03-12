@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import Image from "next/image";
 import Link from "next/link";
@@ -10,7 +10,9 @@ import { compressImages } from "@/lib/image-compression";
 import { BOOKMARKS_CHANGED_EVENT, loadBookmarks, readBookmarks, toggleBookmarkId } from "@/lib/client/bookmarks";
 import { hasFunctionalConsent } from "@/lib/client/consent";
 import { useUserSettings } from "@/lib/client/settings";
+import { uploadMediaFile } from "@/lib/client/media-upload";
 import PostMedia from "@/components/PostMedia";
+import ReportButton from "@/components/ReportButton";
 import { MAX_POST_LENGTH } from "@/lib/posts/content";
 
 type Post = {
@@ -83,7 +85,7 @@ type FeedResponse = {
   lensFallbackError?: string;
 };
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 function comparePostsDesc(a: Post, b: Post): number {
   if (a.timestamp === b.timestamp) {
@@ -197,13 +199,26 @@ export default function FeedPage() {
   }, [authenticated]);
 
   useEffect(() => {
+    if (!authenticated || !viewerAddress) {
+      setBookmarkedPostIds([]);
+      return;
+    }
+    if (feedStatus === "loading") return;
     let cancelled = false;
     loadBookmarks()
       .then((ids) => {
-        if (!cancelled) setBookmarkedPostIds(ids);
+        if (!cancelled) {
+          startTransition(() => {
+            setBookmarkedPostIds(ids);
+          });
+        }
       })
       .catch(() => {
-        if (!cancelled) setBookmarkedPostIds([]);
+        if (!cancelled) {
+          startTransition(() => {
+            setBookmarkedPostIds([]);
+          });
+        }
       });
     const onBookmarksChanged = () => setBookmarkedPostIds(readBookmarks());
     window.addEventListener(BOOKMARKS_CHANGED_EVENT, onBookmarksChanged);
@@ -212,9 +227,10 @@ export default function FeedPage() {
         cancelled = true;
         window.removeEventListener(BOOKMARKS_CHANGED_EVENT, onBookmarksChanged);
       };
-  }, [viewerAddress]);
+  }, [authenticated, viewerAddress, feedStatus]);
 
   useEffect(() => {
+    if (feedStatus === "loading") return;
     // Check for Lens profile after wallet connect
     if (viewerAddress && isAuthReady && authenticated) {
       setCheckingProfile(true);
@@ -226,14 +242,18 @@ export default function FeedPage() {
       })
         .then(res => res.json())
         .then(data => {
-          setHasLensProfile(data.hasProfile);
-          setLensAccountAddress(typeof data.accountAddress === "string" ? data.accountAddress : null);
-          setShowMintPrompt(!data.hasProfile);
+          startTransition(() => {
+            setHasLensProfile(data.hasProfile);
+            setLensAccountAddress(typeof data.accountAddress === "string" ? data.accountAddress : null);
+            setShowMintPrompt(!data.hasProfile);
+          });
         })
         .catch(() => {
-          setHasLensProfile(false);
-          setLensAccountAddress(null);
-          setShowMintPrompt(true);
+          startTransition(() => {
+            setHasLensProfile(false);
+            setLensAccountAddress(null);
+            setShowMintPrompt(true);
+          });
         })
         .finally(() => setCheckingProfile(false));
     } else {
@@ -241,10 +261,11 @@ export default function FeedPage() {
       setLensAccountAddress(null);
       setShowMintPrompt(false);
     }
-  }, [viewerAddress, isAuthReady, authenticated]);
+  }, [viewerAddress, isAuthReady, authenticated, feedStatus]);
 
   // Check for existing Lens session on page load
   useEffect(() => {
+    if (feedStatus === "loading") return;
     if (!isAuthReady || !authenticated) {
       setCheckingLensSession(false);
       return;
@@ -253,19 +274,21 @@ export default function FeedPage() {
     fetch("/api/lens/session", { credentials: "include", cache: "no-store" })
       .then(res => res.json())
       .then(data => {
-        if (data.authenticated) {
-          setIsLensAuthenticated(true);
-          setLensAuthHint("1");
-        } else {
-          setLensAuthHint(null);
-          setIsLensAuthenticated(false);
-        }
+        startTransition(() => {
+          if (data.authenticated) {
+            setIsLensAuthenticated(true);
+            setLensAuthHint("1");
+          } else {
+            setLensAuthHint(null);
+            setIsLensAuthenticated(false);
+          }
+        });
       })
       .catch(() => undefined)
       .finally(() => {
         setCheckingLensSession(false);
       });
-  }, [isAuthReady, authenticated]);
+  }, [isAuthReady, authenticated, feedStatus]);
 
   useEffect(() => {
     nextCursorRef.current = nextCursor;
@@ -458,16 +481,16 @@ export default function FeedPage() {
           format: 'webp',
         });
 
-        // Log compression stats
         const uploadPromises = compressedFiles.map(async (file) => {
-          // Dynamically import IPFS helper
-          const { uploadToIPFS } = await import("@/lib/ipfs");
-          return await uploadToIPFS(file);
+          const result = await uploadMediaFile(file);
+          if (result.status === "pending_review") {
+            throw new Error(result.message);
+          }
+          return result.url;
         });
         mediaUrls = await Promise.all(uploadPromises);
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      } catch (_err) {
-        setError("Failed to upload media");
+      } catch (uploadError) {
+        setError(uploadError instanceof Error ? uploadError.message : "Failed to upload media");
         setSubmitting(false);
         setUploadingMedia(false);
         return;
@@ -676,7 +699,7 @@ export default function FeedPage() {
     setReplyLoadingByPost((prev) => ({ ...prev, [postId]: true }));
 
     try {
-      const res = await fetch(`/api/posts/${postId}/replies?limit=20`, {
+      const res = await fetch(`/api/posts/${postId}/replies?limit=10`, {
         credentials: "include",
       });
       const data = await res.json();
@@ -1290,6 +1313,14 @@ export default function FeedPage() {
                           </button>
                         </div>
                       )}
+                      {!isOwner && (
+                        <ReportButton
+                          entityType="post"
+                          entityId={post.id}
+                          targetAddress={post.author.address}
+                          compact
+                        />
+                      )}
                     </div>
 
                     {isEditing ? (
@@ -1414,16 +1445,26 @@ export default function FeedPage() {
 
                         {replies.map((reply) => (
                           <div key={reply.id} className="rounded-[1.25rem] border border-white/10 bg-black/30 p-3">
-                            <div className="mb-1 flex items-center gap-2">
-                              <Link
-                                href={`/profile/${reply.author.address}`}
-                                className="text-sm font-medium hover:underline"
-                              >
-                                {reply.author.username?.localName || reply.author.address}
-                              </Link>
-                              <span className="text-xs text-gray-500">
-                                {new Date(reply.timestamp).toLocaleString()}
-                              </span>
+                            <div className="mb-1 flex items-start justify-between gap-2">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <Link
+                                  href={`/profile/${reply.author.address}`}
+                                  className="text-sm font-medium hover:underline"
+                                >
+                                  {reply.author.username?.localName || reply.author.address}
+                                </Link>
+                                <span className="text-xs text-gray-500">
+                                  {new Date(reply.timestamp).toLocaleString()}
+                                </span>
+                              </div>
+                              {reply.author.address.toLowerCase() !== viewerAddress && (
+                                <ReportButton
+                                  entityType="reply"
+                                  entityId={reply.id}
+                                  targetAddress={reply.author.address}
+                                  compact
+                                />
+                              )}
                             </div>
                             <div className="text-sm whitespace-pre-wrap break-words">
                               {renderContentWithWrappedLinks(reply.metadata?.content)}

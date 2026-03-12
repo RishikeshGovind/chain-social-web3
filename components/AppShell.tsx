@@ -100,6 +100,7 @@ export default function AppShell({ active, children, rightSidebar }: AppShellPro
                 <div className="flex flex-col gap-2">
                   <Link href="/legal/privacy" className="hover:text-white">Privacy</Link>
                   <Link href="/legal/terms" className="hover:text-white">Terms</Link>
+                  <Link href="/legal/community" className="hover:text-white">Community Rules</Link>
                   <Link href="/legal/cookies" className="hover:text-white">Cookies</Link>
                 </div>
               </div>

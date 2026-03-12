@@ -91,6 +91,10 @@ function collectRuntimeIssues() {
     );
   }
 
+  if (process.env.NEXT_PUBLIC_OPENAI_API_KEY?.trim()) {
+    issues.push("NEXT_PUBLIC_OPENAI_API_KEY must not be set because it exposes a server secret to clients.");
+  }
+
   if (stateBackend === "postgres" && !process.env.DATABASE_URL?.trim()) {
     issues.push("CHAINSOCIAL_STATE_BACKEND=postgres requires DATABASE_URL.");
   }

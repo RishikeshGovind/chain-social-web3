@@ -29,6 +29,7 @@ type LensRepliesOutput = {
 };
 // cache may store either the raw text or a parsed JSON object
 const metadataContentCache = new Map<string, unknown>();
+const MAX_METADATA_CACHE_SIZE = 500;
 const MAX_METADATA_BYTES = 1_000_000;
 const DEFAULT_ALLOWED_METADATA_HOSTS = [
   "ipfs.io",
@@ -38,12 +39,25 @@ const DEFAULT_ALLOWED_METADATA_HOSTS = [
   "arweave.net",
 ];
 
-function getAllowedMetadataHosts() {
+// Parsed once at module load to avoid re-splitting env vars on every metadata fetch
+const _allowedMetadataHosts = (() => {
   const configured = process.env.LENS_METADATA_ALLOWED_HOSTS
     ?.split(",")
     .map((v) => v.trim().toLowerCase())
     .filter(Boolean);
   return new Set<string>([...DEFAULT_ALLOWED_METADATA_HOSTS, ...(configured ?? [])]);
+})();
+
+function getAllowedMetadataHosts() {
+  return _allowedMetadataHosts;
+}
+
+function setMetadataCache(key: string, value: unknown) {
+  if (metadataContentCache.size >= MAX_METADATA_CACHE_SIZE) {
+    const oldest = metadataContentCache.keys().next().value;
+    if (oldest !== undefined) metadataContentCache.delete(oldest);
+  }
+  metadataContentCache.set(key, value);
 }
 
 function isPrivateIp(ip: string) {
@@ -241,12 +255,12 @@ async function fetchMetadata(uri: string): Promise<unknown> {
       const encoded = uri.slice("data:application/json,".length);
       const decoded = decodeURIComponent(encoded);
       const parsed = JSON.parse(decoded) as unknown;
-      metadataContentCache.set(uri, parsed);
+      setMetadataCache(uri, parsed);
       return parsed;
     }
 
     if (!(await isSafeMetadataUrl(uri))) {
-      metadataContentCache.set(uri, "");
+      setMetadataCache(uri, "");
       return "";
     }
 
@@ -259,19 +273,19 @@ async function fetchMetadata(uri: string): Promise<unknown> {
     });
     clearTimeout(timeout);
     if (!res.ok) {
-      metadataContentCache.set(uri, "");
+      setMetadataCache(uri, "");
       return "";
     }
 
     const contentLengthHeader = res.headers.get("content-length");
     const contentLength = contentLengthHeader ? Number(contentLengthHeader) : 0;
     if (contentLength && contentLength > MAX_METADATA_BYTES) {
-      metadataContentCache.set(uri, "");
+      setMetadataCache(uri, "");
       return "";
     }
     const text = await res.text();
     if (text.length > MAX_METADATA_BYTES) {
-      metadataContentCache.set(uri, "");
+      setMetadataCache(uri, "");
       return "";
     }
     let parsed: unknown;
@@ -281,11 +295,11 @@ async function fetchMetadata(uri: string): Promise<unknown> {
       parsed = text;
     }
 
-    metadataContentCache.set(uri, parsed);
+    setMetadataCache(uri, parsed);
     return parsed;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   } catch (_error) {
-    metadataContentCache.set(uri, "");
+    setMetadataCache(uri, "");
     return "";
   }
 }
@@ -608,9 +622,49 @@ async function extractPosts(
   return { items: [], nextCursor: null };
 }
 
-// Lens v3 uses PageSize enum: TEN or FIFTY
-function getPageSize(limit: number): string {
-  return limit > 10 ? "FIFTY" : "TEN";
+const LENS_UPSTREAM_PAGE_SIZE = 10;
+
+// Lens v3 uses PageSize enum: TEN or FIFTY.
+// For interactive product surfaces we always fetch in TEN-sized upstream pages
+// and compose multiple pages ourselves when needed. That keeps cursor semantics
+// correct without silently moderating hidden 50-item batches.
+function getPageSize(): string {
+  return "TEN";
+}
+
+function pageCountForTarget(limit: number) {
+  return Math.max(1, Math.ceil(Math.max(1, limit) / LENS_UPSTREAM_PAGE_SIZE));
+}
+
+function isLensTransportFailure(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("timeout") ||
+    message.includes("socket hang up") ||
+    message.includes("network error") ||
+    message.includes("econnreset") ||
+    message.includes("econnrefused") ||
+    message.includes("enotfound")
+  );
+}
+
+function appendPostsFromExtraction(input: {
+  extracted: { items: Post[]; debugMetadata?: unknown[] };
+  collected: Post[];
+  seenIds: Set<string>;
+  debugMetadata?: unknown[];
+  filter?: (post: Post) => boolean;
+}) {
+  input.extracted.items.forEach((post, index) => {
+    if (input.filter && !input.filter(post)) return;
+    if (input.seenIds.has(post.id)) return;
+    input.seenIds.add(post.id);
+    input.collected.push(post);
+    if (input.debugMetadata && input.extracted.debugMetadata) {
+      input.debugMetadata.push(input.extracted.debugMetadata[index]);
+    }
+  });
 }
 
 const QUERY_VARIANTS = [
@@ -694,7 +748,7 @@ const QUERY_VARIANTS = [
     `,
     variables: (input: LensFetchInput) => ({
       request: {
-        pageSize: getPageSize(input.limit || 20),
+        pageSize: getPageSize(),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     }),
@@ -755,7 +809,7 @@ const QUERY_VARIANTS = [
     `,
     variables: (input: LensFetchInput) => ({
       request: {
-        pageSize: getPageSize(input.limit || 20),
+        pageSize: getPageSize(),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     }),
@@ -794,7 +848,7 @@ const QUERY_VARIANTS = [
     `,
     variables: (input: LensFetchInput) => ({
       request: {
-        pageSize: getPageSize(input.limit || 20),
+        pageSize: getPageSize(),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     }),
@@ -828,7 +882,7 @@ const QUERY_VARIANTS = [
     `,
     variables: (input: LensFetchInput) => ({
       request: {
-        pageSize: getPageSize(input.limit || 20),
+        pageSize: getPageSize(),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     }),
@@ -916,6 +970,7 @@ const FEED_QUERY_VARIANTS = [
     variables: (input: LensFetchInput) => ({
       request: {
         filter: "GLOBAL",
+        pageSize: getPageSize(),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     }),
@@ -976,9 +1031,11 @@ const FEED_QUERY_VARIANTS = [
         }
       }
     `,
-    variables: () => ({
+    variables: (input: LensFetchInput) => ({
       request: {
         filter: "GLOBAL",
+        pageSize: getPageSize(),
+        ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     }),
   },
@@ -1018,7 +1075,7 @@ const AUTHOR_QUERY_VARIANTS = [
     variables: (input: LensFetchInput, author: string) => ({
       request: {
         filter: { authors: [author] },
-        pageSize: getPageSize(input.limit || 50),
+        pageSize: getPageSize(),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     }),
@@ -1056,7 +1113,7 @@ const AUTHOR_QUERY_VARIANTS = [
     variables: (input: LensFetchInput, author: string) => ({
       request: {
         authors: [author],
-        pageSize: getPageSize(input.limit || 50),
+        pageSize: getPageSize(),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     }),
@@ -1094,7 +1151,7 @@ const AUTHOR_QUERY_VARIANTS = [
     variables: (input: LensFetchInput, author: string) => ({
       request: {
         filter: { authors: [{ address: author }] },
-        pageSize: getPageSize(input.limit || 50),
+        pageSize: getPageSize(),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     }),
@@ -1105,23 +1162,47 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
   const errors: string[] = [];
   const normalizedAuthor = input.author ? normalizeAddress(input.author) : null;
   const targetCount = Math.min(Math.max(input.limit || 20, 1), 200);
-  const maxAuthorFallbackPages = input.quick ? 8 : 80;
+  const maxAuthorFallbackPages = input.quick ? 5 : 10;
+  const maxTargetPages = pageCountForTarget(targetCount);
 
   // Global timeline should come from feed() so repost-driven items can surface.
   // For author/post-specific fetches we keep posts() behavior.
   if (!input.author && !input.postId) {
     for (const variant of FEED_QUERY_VARIANTS) {
       try {
-        const data = await lensRequest(variant.query, variant.variables(input), input.accessToken);
-        const extracted = await extractPosts(data, input.debug);
+        const collected: Post[] = [];
+        const collectedDebug: unknown[] = [];
+        const seenIds = new Set<string>();
+        let cursor: string | undefined = input.cursor;
+        let nextCursor: string | null = null;
+
+        for (let page = 0; page < maxTargetPages; page += 1) {
+          const data = await lensRequest(
+            variant.query,
+            variant.variables({ ...input, cursor }),
+            input.accessToken
+          );
+          const extracted = await extractPosts(data, input.debug);
+          appendPostsFromExtraction({
+            extracted,
+            collected,
+            seenIds,
+            ...(input.debug ? { debugMetadata: collectedDebug } : {}),
+          });
+          nextCursor = extracted.nextCursor;
+          if (collected.length >= targetCount || !nextCursor) break;
+          cursor = nextCursor;
+        }
+
         return {
-          posts: extracted.items,
-          nextCursor: extracted.nextCursor,
-          ...(input.debug ? { debugMetadata: extracted.debugMetadata } : {}),
+          posts: collected.slice(0, targetCount),
+          nextCursor,
+          ...(input.debug ? { debugMetadata: collectedDebug.slice(0, targetCount) } : {}),
         };
       } catch (error) {
         const msg = error instanceof Error ? error.message : "Lens feed query failed";
         errors.push(msg);
+        if (isLensTransportFailure(error)) break;
       }
     }
   }
@@ -1129,25 +1210,42 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
   if (normalizedAuthor) {
     for (const variant of AUTHOR_QUERY_VARIANTS) {
       try {
-        const data = await lensRequest(
-          variant.query,
-          variant.variables(input, normalizedAuthor),
-          input.accessToken
-        );
-        const extracted = await extractPosts(data, input.debug);
-        const filteredItems = extracted.items.filter(
-          (post) => post.author.address === normalizedAuthor
-        );
-        if (filteredItems.length > 0 || extracted.nextCursor) {
+        const collected: Post[] = [];
+        const collectedDebug: unknown[] = [];
+        const seenIds = new Set<string>();
+        let cursor: string | undefined = input.cursor;
+        let nextCursor: string | null = null;
+
+        for (let page = 0; page < maxTargetPages; page += 1) {
+          const data = await lensRequest(
+            variant.query,
+            variant.variables({ ...input, cursor }, normalizedAuthor),
+            input.accessToken
+          );
+          const extracted = await extractPosts(data, input.debug);
+          appendPostsFromExtraction({
+            extracted,
+            collected,
+            seenIds,
+            ...(input.debug ? { debugMetadata: collectedDebug } : {}),
+            filter: (post) => post.author.address === normalizedAuthor,
+          });
+          nextCursor = extracted.nextCursor;
+          if (collected.length >= targetCount || !nextCursor) break;
+          cursor = nextCursor;
+        }
+
+        if (collected.length > 0 || nextCursor) {
           return {
-            posts: filteredItems.slice(0, targetCount),
-            nextCursor: extracted.nextCursor,
-            ...(input.debug ? { debugMetadata: extracted.debugMetadata } : {}),
+            posts: collected.slice(0, targetCount),
+            nextCursor,
+            ...(input.debug ? { debugMetadata: collectedDebug.slice(0, targetCount) } : {}),
           };
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : "Lens author query failed";
         errors.push(msg);
+        if (isLensTransportFailure(error)) break;
       }
     }
   }
@@ -1160,6 +1258,7 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
         const seenIds = new Set<string>();
         let cursor: string | undefined = input.cursor;
         let nextCursor: string | null = null;
+        const collectedDebug: unknown[] = [];
 
         // Author filtering is client-side; page through the upstream feed so
         // older authored posts are still discoverable.
@@ -1170,15 +1269,13 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
             input.accessToken
           );
           const extracted = await extractPosts(data, input.debug);
-          const filtered = extracted.items.filter(
-            (post) => post.author.address === normalizedAuthor
-          );
-
-          for (const post of filtered) {
-            if (seenIds.has(post.id)) continue;
-            seenIds.add(post.id);
-            collected.push(post);
-          }
+          appendPostsFromExtraction({
+            extracted,
+            collected,
+            seenIds,
+            ...(input.debug ? { debugMetadata: collectedDebug } : {}),
+            filter: (post) => post.author.address === normalizedAuthor,
+          });
 
           nextCursor = extracted.nextCursor;
           if (collected.length >= targetCount || !nextCursor) break;
@@ -1188,25 +1285,45 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
         return {
           posts: collected.slice(0, targetCount),
           nextCursor,
+          ...(input.debug ? { debugMetadata: collectedDebug.slice(0, targetCount) } : {}),
         };
       }
 
-      const data = await lensRequest(variant.query, variant.variables(input), input.accessToken);
-      logger.debug("lens.feed.query_success", { hasData: !!data });
-      const extracted = await extractPosts(data, input.debug);
-      logger.debug("lens.feed.posts_extracted", { count: extracted.items.length });
+      const collected: Post[] = [];
+      const collectedDebug: unknown[] = [];
+      const seenIds = new Set<string>();
+      let cursor: string | undefined = input.cursor;
+      let nextCursor: string | null = null;
+
+      for (let page = 0; page < maxTargetPages; page += 1) {
+        const data = await lensRequest(
+          variant.query,
+          variant.variables({ ...input, cursor }),
+          input.accessToken
+        );
+        logger.debug("lens.feed.query_success", { hasData: !!data });
+        const extracted = await extractPosts(data, input.debug);
+        logger.debug("lens.feed.posts_extracted", { count: extracted.items.length });
+        appendPostsFromExtraction({
+          extracted,
+          collected,
+          seenIds,
+          ...(input.debug ? { debugMetadata: collectedDebug } : {}),
+        });
+        nextCursor = extracted.nextCursor;
+        if (collected.length >= targetCount || !nextCursor) break;
+        cursor = nextCursor;
+      }
       return {
-        // Lens PageSize is enum-based (TEN/FIFTY). When requesting limit=20,
-        // the API page is often FIFTY; slicing to 20 while using the FIFTY cursor
-        // skips 21-50 on the next page. Return the full page to avoid gaps.
-        posts: extracted.items,
-        nextCursor: extracted.nextCursor,
-        ...(input.debug ? { debugMetadata: extracted.debugMetadata } : {}),
+        posts: collected.slice(0, targetCount),
+        nextCursor,
+        ...(input.debug ? { debugMetadata: collectedDebug.slice(0, targetCount) } : {}),
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Lens query failed";
       logger.warn("lens.feed.query_failed", { error: msg });
       errors.push(msg);
+      if (isLensTransportFailure(error)) break;
     }
   }
 
@@ -1392,7 +1509,7 @@ export async function fetchLensReplies(input: {
       query: buildPostReferencesQuery(referenceTypeVariants[0], true),
       variables: {
         postId,
-        pageSize: getPageSize(input.limit || 20),
+        pageSize: getPageSize(),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     },
@@ -1408,7 +1525,7 @@ export async function fetchLensReplies(input: {
       query: buildPostReferencesQuery(referenceTypeVariants[i], true),
       variables: {
         postId,
-        pageSize: getPageSize(input.limit || 20),
+        pageSize: getPageSize(),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       },
     });
@@ -1424,24 +1541,47 @@ export async function fetchLensReplies(input: {
       const data = await lensRequest(variant.query, variant.variables, input.accessToken);
       const root = asObject(data);
       const referencesObj = asObject(root?.postReferences);
-      const rawItems: unknown[] = Array.isArray(referencesObj?.items)
-        ? referencesObj!.items
-        : [];
+      const collected: Reply[] = [];
+      const seenIds = new Set<string>();
+      let nextCursor = asString(asObject(referencesObj?.pageInfo)?.next) ?? null;
+      let currentData = data;
+      let currentVariables = variant.variables;
 
-      const mapped = await Promise.all(
-        rawItems.map((item) => mapNodeToReply(item, input.postId))
-      );
-      const replies = mapped.filter((item): item is Reply => !!item);
-      const nextCursor =
-        asString(asObject(referencesObj?.pageInfo)?.next) ??
-        null;
+      for (let page = 0; page < pageCountForTarget(input.limit); page += 1) {
+        const currentRoot = asObject(currentData);
+        const currentReferencesObj = asObject(currentRoot?.postReferences);
+        const rawItems: unknown[] = Array.isArray(currentReferencesObj?.items)
+          ? currentReferencesObj.items
+          : [];
+        const mapped = await Promise.all(
+          rawItems.map((item) => mapNodeToReply(item, input.postId))
+        );
+        for (const reply of mapped.filter((item): item is Reply => !!item)) {
+          if (seenIds.has(reply.id)) continue;
+          seenIds.add(reply.id);
+          collected.push(reply);
+        }
+
+        nextCursor = asString(asObject(currentReferencesObj?.pageInfo)?.next) ?? null;
+        if (collected.length >= Math.max(1, input.limit) || !nextCursor) {
+          break;
+        }
+
+        currentVariables = {
+          postId,
+          pageSize: getPageSize(),
+          cursor: nextCursor,
+        };
+        currentData = await lensRequest(variant.query, currentVariables, input.accessToken);
+      }
 
       return {
-        replies: replies.slice(0, Math.max(1, input.limit)),
+        replies: collected.slice(0, Math.max(1, input.limit)),
         nextCursor,
       };
     } catch (error) {
       errors.push(error instanceof Error ? error.message : "Lens replies query failed");
+      if (isLensTransportFailure(error)) break;
     }
   }
 

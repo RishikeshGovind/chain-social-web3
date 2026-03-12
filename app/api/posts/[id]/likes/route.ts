@@ -4,6 +4,7 @@ import { toggleLike } from "@/lib/posts/store";
 import { toggleLensLike } from "@/lib/lens/writes";
 import { notifyPostLiked } from "@/lib/server/notifications/helpers";
 import { logger } from "@/lib/server/logger";
+import { isAddressBanned } from "@/lib/server/moderation/store";
 import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
@@ -20,6 +21,9 @@ export async function PATCH(
         { error: "Unauthorized. Connect Lens before liking." },
         { status: 401 }
       );
+    }
+    if (await isAddressBanned(actorAddress)) {
+      return NextResponse.json({ error: "Your account is restricted from liking posts." }, { status: 403 });
     }
 
     const postId = context.params.id;
