@@ -67,17 +67,6 @@ function findAddressInGraph(value: unknown): string | null {
   return null;
 }
 
-function findAddressInClaims(payload: Record<string, unknown>): string | null {
-  const candidateKeys = ["sub", "address", "wallet", "owner", "account", "actor", "managedBy"];
-  for (const key of candidateKeys) {
-    if (!(key in payload)) continue;
-    const value = payload[key];
-    const found = findAddressInGraph(value);
-    if (found) return found;
-  }
-  return null;
-}
-
 async function resolveActorAddressFromLens(accessToken: string): Promise<string | null> {
   const cached = actorCache.get(accessToken);
   if (cached && cached.expiresAtMs > Date.now()) {
