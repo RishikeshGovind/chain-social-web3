@@ -85,22 +85,33 @@ async function resolveActorAddressFromLens(accessToken: string): Promise<string 
   }
 
   const variants: string[] = [
+    // Lens v3: me returns MeResult with account field (not a union)
     `
       query Me {
         me {
-          __typename
-          ... on Account {
+          account {
             address
-            owner {
+            owner
+          }
+        }
+      }
+    `,
+    // Lens v3 alternative: request loggedInAs
+    `
+      query Me {
+        me {
+          loggedInAs {
+            account {
               address
             }
           }
         }
       }
     `,
+    // Legacy / alternative schema
     `
-      query Viewer {
-        viewer {
+      query Me {
+        me {
           __typename
           ... on Account {
             address
@@ -119,14 +130,6 @@ async function resolveActorAddressFromLens(accessToken: string): Promise<string 
         }
       }
     `,
-    `
-      query ViewerAddress {
-        viewer {
-          __typename
-          address
-        }
-      }
-    `,
   ];
 
   for (const query of variants) {
@@ -135,6 +138,7 @@ async function resolveActorAddressFromLens(accessToken: string): Promise<string 
       const root = asObject(data);
       const prioritized =
         asString(asObject(asObject(root?.me)?.account)?.address) ??
+        asString(asObject(asObject(asObject(root?.me)?.loggedInAs)?.account)?.address) ??
         asString(asObject(asObject(root?.viewer)?.account)?.address) ??
         asString(asObject(asObject(root?.authenticatedUser)?.account)?.address) ??
         asString(asObject(root?.me)?.address) ??
@@ -155,18 +159,8 @@ async function resolveActorAddressFromLens(accessToken: string): Promise<string 
     }
   }
 
-  const payload = parseJwtPayload(accessToken);
-  if (payload) {
-    const claimAddress = findAddressInClaims(payload);
-    if (claimAddress) {
-      actorCache.set(accessToken, {
-        address: claimAddress,
-        expiresAtMs: Date.now() + ACTOR_CACHE_TTL_MS,
-      });
-      return claimAddress;
-    }
-  }
-
+  // Do NOT fall back to unsigned JWT claims — only trust identity proven
+  // by a successful Lens introspection/me call above.
   return null;
 }
 

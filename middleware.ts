@@ -11,15 +11,6 @@ const MAX_BODY_SIZE = 10 * 1024 * 1024;
 export function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
-  // Skip static and build assets.
-  if (
-    pathname.startsWith("/_next/") ||
-    pathname.startsWith("/favicon") ||
-    pathname.startsWith("/public/")
-  ) {
-    return NextResponse.next();
-  }
-
   // Enforce request body size limits for POST/PUT/PATCH requests
   const contentLength = request.headers.get("content-length");
   if (contentLength) {
@@ -63,5 +54,8 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/:path*"],
+  matcher: [
+    // Match all routes EXCEPT static files, Next.js internals, and images
+    "/((?!_next/static|_next/image|favicon|public/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|woff|woff2|ttf|eot)$).*)",
+  ],
 };

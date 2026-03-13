@@ -20,7 +20,8 @@ export async function GET(req: Request) {
   }
 
   const { searchParams } = new URL(req.url);
-  const limit = Number.parseInt(searchParams.get("limit") ?? "100", 10);
+  const rawLimit = Number.parseInt(searchParams.get("limit") ?? "100", 10);
+  const limit = Number.isNaN(rawLimit) ? 100 : Math.min(Math.max(rawLimit, 1), 200);
   const data = await listNotificationsForRecipient(actor, { limit });
   return NextResponse.json({ actor, ...data });
 }

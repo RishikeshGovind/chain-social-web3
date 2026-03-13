@@ -12,7 +12,7 @@ const VALID_STATUS = new Set<DsarStatus>(["open", "in_review", "completed", "rej
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 export async function GET(req: Request) {
-  const operator = await getAdminOperator();
+  const operator = await getAdminOperator(req.headers);
   if (!operator && !isLegacyAdminTokenRequest(req.headers)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: NO_STORE_HEADERS });
   }
@@ -30,7 +30,7 @@ export async function GET(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  const operator = await getAdminOperator();
+  const operator = await getAdminOperator(req.headers);
   if (!operator && !isLegacyAdminTokenRequest(req.headers)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: NO_STORE_HEADERS });
   }

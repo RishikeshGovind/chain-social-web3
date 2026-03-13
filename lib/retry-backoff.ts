@@ -88,7 +88,7 @@ export function isRetryableError(error: unknown): boolean {
       return true;
     }
     // HTTP status hints in message
-    if (message.includes('5') || message.includes('429') || message.includes('rate')) {
+    if (/\b5\d{2}\b/.test(message) || message.includes('429') || message.includes('rate')) {
       return true;
     }
   }

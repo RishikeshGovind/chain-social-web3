@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
 import AppShell from "@/components/AppShell";
+import { uploadMediaFile } from "@/lib/client/media-upload";
 
 type AvatarMode = "dicebear" | "custom";
 type MigrationOutboxItem = {
@@ -150,23 +151,11 @@ export default function EditProfilePage() {
   }, [user?.wallet?.address]);
 
   async function uploadImage(file: File): Promise<string> {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await fetch("/api/media/upload", {
-      method: "POST",
-      body: formData,
-    });
-    const raw = await res.text();
-    let data: { url?: string; error?: string } = {};
-    try {
-      data = raw ? (JSON.parse(raw) as { url?: string; error?: string }) : {};
-    } catch {
-      throw new Error("Upload endpoint returned an invalid response");
+    const result = await uploadMediaFile(file);
+    if (result.status === "pending_review") {
+      throw new Error(result.message);
     }
-    if (!res.ok || !data?.url) {
-      throw new Error(data?.error || "Image upload failed");
-    }
-    return data.url as string;
+    return result.url;
   }
 
   async function handleAvatarUpload(file: File) {

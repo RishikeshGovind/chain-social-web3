@@ -26,6 +26,13 @@ function getLensApiCandidates() {
   // Lens v3 uses api.lens.xyz/graphql as the primary endpoint
   const envUrl = process.env.LENS_API_URL?.trim();
   
+  // Only trust known Lens API domains to prevent SSRF via env injection
+  const TRUSTED_LENS_HOSTS = new Set([
+    "api.lens.xyz",
+    "api.lens.dev",
+    "api-v2.lens.dev",
+  ]);
+
   // Ensure URL ends with /graphql
   const normalizeUrl = (url: string | undefined): string | null => {
     if (!url || url.length === 0) return null;
@@ -34,6 +41,16 @@ function getLensApiCandidates() {
     // Add /graphql if not present
     if (!url.endsWith('/graphql')) {
       url = `${url}/graphql`;
+    }
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:") return null;
+      if (!TRUSTED_LENS_HOSTS.has(parsed.hostname)) {
+        logger.warn("lens.untrusted_api_host", { hostname: parsed.hostname });
+        return null;
+      }
+    } catch {
+      return null;
     }
     return url;
   };

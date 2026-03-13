@@ -2,11 +2,12 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { BOOKMARKS_CHANGED_EVENT, loadBookmarks, readBookmarks, toggleBookmarkId } from "@/lib/client/bookmarks";
 import { useUserSettings } from "@/lib/client/settings";
 import PostMedia from "@/components/PostMedia";
+import ReportButton from "@/components/ReportButton";
 
 type Post = {
   id: string;
@@ -45,6 +46,9 @@ type FeedResponse = {
   posts?: Post[];
   nextCursor?: string | null;
 };
+
+const EXPLORE_INITIAL_PAGES = 1;
+const EXPLORE_PAGE_SIZE = 10;
 
 function isPost(value: unknown): value is Post {
   if (!value || typeof value !== "object") return false;
@@ -100,6 +104,9 @@ function didAuthExpire(status: number, error: unknown) {
 
 export default function ExplorePage() {
   const [posts, setPosts] = useState<Post[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({});
@@ -114,6 +121,9 @@ export default function ExplorePage() {
     () => user?.wallet?.address?.toLowerCase() ?? "",
     [user?.wallet?.address]
   );
+  const nextCursorRef = useRef<string | null>(null);
+  const loadingMoreRef = useRef(false);
+  const loadMoreAnchorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,11 +146,12 @@ export default function ExplorePage() {
   useEffect(() => {
     let cancelled = false;
     async function loadPosts() {
+      setLoading(true);
       try {
         const collected = new Map<string, Post>();
         let cursor: string | null = null;
-        for (let page = 0; page < 4; page += 1) {
-          const params = new URLSearchParams({ limit: "50" });
+        for (let page = 0; page < EXPLORE_INITIAL_PAGES; page += 1) {
+          const params = new URLSearchParams({ limit: String(EXPLORE_PAGE_SIZE) });
           if (cursor) params.set("cursor", cursor);
           const res = await fetch(`/api/posts?${params.toString()}`, {
             credentials: "include",
@@ -153,9 +164,17 @@ export default function ExplorePage() {
           cursor = data.nextCursor ?? null;
           if (!cursor) break;
         }
-        if (!cancelled) setPosts(Array.from(collected.values()));
+        if (!cancelled) {
+          setPosts(Array.from(collected.values()));
+          setNextCursor(cursor);
+        }
       } catch {
-        if (!cancelled) setPosts([]);
+        if (!cancelled) {
+          setPosts([]);
+          setNextCursor(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
     void loadPosts();
@@ -163,6 +182,62 @@ export default function ExplorePage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    nextCursorRef.current = nextCursor;
+  }, [nextCursor]);
+
+  useEffect(() => {
+    loadingMoreRef.current = loadingMore;
+  }, [loadingMore]);
+
+  useEffect(() => {
+    if (query.trim()) return;
+    const anchor = loadMoreAnchorRef.current;
+    if (!anchor) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting) return;
+        if (!nextCursorRef.current || loadingMoreRef.current) return;
+        void loadMorePosts();
+      },
+      { rootMargin: "300px 0px" }
+    );
+
+    observer.observe(anchor);
+    return () => observer.disconnect();
+  }, [query]);
+
+  async function loadMorePosts() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const params = new URLSearchParams({
+        limit: String(EXPLORE_PAGE_SIZE),
+        cursor: nextCursor,
+      });
+      const res = await fetch(`/api/posts?${params.toString()}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const data = (await res.json()) as FeedResponse;
+      const incoming = Array.isArray(data.posts) ? data.posts : [];
+      setPosts((prev) => {
+        const merged = new Map(prev.map((post) => [post.id, post] as const));
+        for (const post of incoming) {
+          merged.set(post.id, post);
+        }
+        return Array.from(merged.values());
+      });
+      setNextCursor(data.nextCursor ?? null);
+    } catch {
+      setError((current) => current ?? "Failed to load more posts.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const ranked = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -323,7 +398,7 @@ export default function ExplorePage() {
   async function fetchReplies(postId: string) {
     setReplyLoadingByPost((prev) => ({ ...prev, [postId]: true }));
     try {
-      const res = await fetch(`/api/posts/${postId}/replies?limit=20`, {
+      const res = await fetch(`/api/posts/${postId}/replies?limit=10`, {
         credentials: "include",
       });
       const data = await res.json();
@@ -563,6 +638,9 @@ export default function ExplorePage() {
           )}
 
           <div className="mt-6 space-y-5">
+            {loading && posts.length === 0 && (
+              <p className="text-sm text-gray-400">Loading posts...</p>
+            )}
             {ranked.map(({ post, score }, index) => {
               const liked = (post.likes ?? []).includes(viewerAddress);
               const reposted = (post.reposts ?? []).includes(viewerAddress);
@@ -612,6 +690,14 @@ export default function ExplorePage() {
                         </div>
                       </div>
                     </div>
+                    {post.author.address.toLowerCase() !== viewerAddress && (
+                      <ReportButton
+                        entityType="post"
+                        entityId={post.id}
+                        targetAddress={post.author.address}
+                        compact
+                      />
+                    )}
                   </div>
 
                   <div className={`mb-4 whitespace-pre-wrap break-words text-gray-100 ${settings.compactFeed ? "text-sm leading-6" : "text-[15px] leading-7"}`}>
@@ -688,11 +774,21 @@ export default function ExplorePage() {
                       )}
                       {replies.map((reply) => (
                         <div key={reply.id} className="rounded-[1.25rem] border border-white/10 bg-black/30 p-3">
-                          <div className="mb-1 flex items-center gap-2">
-                            <Link href={`/profile/${reply.author.address}`} className="text-sm font-medium hover:underline">
-                              {reply.author.username?.localName ?? shortenAddress(reply.author.address)}
-                            </Link>
-                            <span className="text-xs text-gray-500">{new Date(reply.timestamp).toLocaleString()}</span>
+                          <div className="mb-1 flex items-start justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <Link href={`/profile/${reply.author.address}`} className="text-sm font-medium hover:underline">
+                                {reply.author.username?.localName ?? shortenAddress(reply.author.address)}
+                              </Link>
+                              <span className="text-xs text-gray-500">{new Date(reply.timestamp).toLocaleString()}</span>
+                            </div>
+                            {reply.author.address.toLowerCase() !== viewerAddress && (
+                              <ReportButton
+                                entityType="reply"
+                                entityId={reply.id}
+                                targetAddress={reply.author.address}
+                                compact
+                              />
+                            )}
                           </div>
                           <div className="whitespace-pre-wrap break-words text-sm">
                             {renderContentWithWrappedLinks(reply.metadata?.content)}
@@ -707,7 +803,24 @@ export default function ExplorePage() {
                 </article>
               );
             })}
-            {ranked.length === 0 && <p className="text-sm text-gray-500">No posts match your search.</p>}
+            {!loading && ranked.length === 0 && <p className="text-sm text-gray-500">No posts match your search.</p>}
+            {!query.trim() && nextCursor && (
+              <div className="pt-2">
+                <div ref={loadMoreAnchorRef} className="h-1 w-full" />
+              </div>
+            )}
+            {!query.trim() && nextCursor && (
+              <div className="flex justify-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => void loadMorePosts()}
+                  disabled={loadingMore}
+                  className="rounded-full border border-white/10 px-4 py-2 text-sm text-gray-300 transition hover:bg-white/[0.06] disabled:opacity-50"
+                >
+                  {loadingMore ? "Loading..." : "Load more"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </main>

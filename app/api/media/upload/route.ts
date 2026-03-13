@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { getActorAddressFromLensCookie } from "@/lib/server/auth/lens-actor";
 import { isValidAddress } from "@/lib/posts/content";
+import {
+  inspectMediaBuffer,
+  isAddressBanned,
+  registerMediaFingerprint,
+  quarantineMediaUpload,
+} from "@/lib/server/moderation/store";
 import { checkUploadRateLimit } from "@/lib/server/rate-limit";
 import { getMediaStorage } from "@/lib/server/storage/media-storage";
 
@@ -65,6 +71,9 @@ export async function POST(req: Request) {
     if (!actorAddress || !isValidAddress(actorAddress)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    if (await isAddressBanned(actorAddress)) {
+      return NextResponse.json({ error: "Your account is restricted from uploading media." }, { status: 403 });
+    }
 
     const uploadRateLimit = await checkUploadRateLimit(actorAddress);
     if (!uploadRateLimit.ok) {
@@ -114,12 +123,80 @@ export async function POST(req: Request) {
     if (!hasValidImageSignature(buffer, mimeType)) {
       return NextResponse.json({ error: "File content does not match image type" }, { status: 400 });
     }
+    const mediaSafety = await inspectMediaBuffer({
+      actorAddress,
+      buffer,
+      mimeType,
+    });
+    if (mediaSafety.decision === "block") {
+      await registerMediaFingerprint({
+        actorAddress,
+        sha256: mediaSafety.sha256,
+        mimeType,
+        status: "blocked",
+        labels: mediaSafety.labels,
+      });
+      return NextResponse.json(
+        { error: mediaSafety.reason ?? "Upload blocked by safety system." },
+        { status: 400 }
+      );
+    }
 
     const ext = extensionForMime(mimeType);
     const url = await getMediaStorage().putImage({
       data: buffer,
       mimeType,
       extension: ext,
+    });
+
+    const reviewMode = (
+      process.env.CHAINSOCIAL_MEDIA_REVIEW_MODE ??
+      (process.env.NODE_ENV === "production" ? "manual" : "off")
+    )
+      .trim()
+      .toLowerCase();
+
+    if (reviewMode === "manual") {
+      await quarantineMediaUpload({
+        url,
+        actorAddress,
+        mimeType,
+        sha256: mediaSafety.sha256,
+        labels: mediaSafety.labels,
+      });
+      return NextResponse.json(
+        {
+          pendingReview: true,
+          error: "Upload received and queued for review. It will not appear publicly until approved.",
+        },
+        { status: 202 }
+      );
+    }
+
+    if (mediaSafety.decision === "review") {
+      await quarantineMediaUpload({
+        url,
+        actorAddress,
+        mimeType,
+        sha256: mediaSafety.sha256,
+        labels: mediaSafety.labels,
+      });
+      return NextResponse.json(
+        {
+          pendingReview: true,
+          error: mediaSafety.reason ?? "Upload requires safety review before it can appear publicly.",
+        },
+        { status: 202 }
+      );
+    }
+
+    await registerMediaFingerprint({
+      actorAddress,
+      sha256: mediaSafety.sha256,
+      url,
+      mimeType,
+      status: "clean",
+      labels: mediaSafety.labels,
     });
 
     return NextResponse.json({ url });

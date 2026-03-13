@@ -7,14 +7,14 @@ export type MediaStorage = {
 };
 
 class LocalMediaStorage implements MediaStorage {
-  private readonly uploadDir = path.join(process.cwd(), "public", "uploads");
+  private readonly uploadDir = path.join(process.cwd(), "private-uploads");
 
   async putImage(input: { data: Buffer; mimeType: string; extension: string }) {
     await mkdir(this.uploadDir, { recursive: true });
     const fileName = `${Date.now()}-${crypto.randomUUID()}.${input.extension}`;
     const filePath = path.join(this.uploadDir, fileName);
     await writeFile(filePath, input.data);
-    return `/uploads/${fileName}`;
+    return `/api/media/serve/${fileName}`;
   }
 }
 

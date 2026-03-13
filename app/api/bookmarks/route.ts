@@ -7,6 +7,11 @@ import {
   toggleBookmark,
 } from "@/lib/server/bookmarks/store";
 import { logger } from "@/lib/server/logger";
+import {
+  filterVisiblePosts,
+  isAddressBanned,
+  moderateIncomingPosts,
+} from "@/lib/server/moderation/store";
 
 async function parseJsonBody(req: Request): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
   try {
@@ -30,6 +35,9 @@ export async function GET(req: Request) {
   if (!actor) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (await isAddressBanned(actor)) {
+    return NextResponse.json({ error: "Your account is restricted from using bookmarks." }, { status: 403 });
+  }
 
   const { searchParams } = new URL(req.url);
   const includePosts = searchParams.get("includePosts") === "1";
@@ -41,11 +49,16 @@ export async function GET(req: Request) {
 
   const accessToken = await getLensAccessTokenFromCookie();
   const resolved = await resolveBookmarkedPosts(actor, accessToken ?? undefined);
+  const visiblePosts = await moderateIncomingPosts(
+    await filterVisiblePosts(resolved.map((item) => item.post))
+  );
+  const visibleIds = new Set(visiblePosts.map((post) => post.id));
+  const visibleResolved = resolved.filter((item) => visibleIds.has(item.post.id));
   return NextResponse.json({
     actor,
     ids,
-    items: resolved.map((item) => item.bookmark),
-    posts: resolved.map((item) => item.post),
+    items: visibleResolved.map((item) => item.bookmark),
+    posts: visiblePosts,
   });
 }
 
@@ -53,6 +66,9 @@ export async function PATCH(req: Request) {
   const actor = await getActor();
   if (!actor) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (await isAddressBanned(actor)) {
+    return NextResponse.json({ error: "Your account is restricted from using bookmarks." }, { status: 403 });
   }
 
   const parsed = await parseJsonBody(req);

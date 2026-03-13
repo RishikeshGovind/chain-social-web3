@@ -66,7 +66,7 @@ export async function POST() {
     response.cookies.set("lensAccessToken", result.accessToken, {
       httpOnly: true,
       secure,
-      sameSite: "lax",
+      sameSite: "strict",
       path: "/",
       maxAge: 60 * 60 * 24, // 24 hours
     });
@@ -74,7 +74,7 @@ export async function POST() {
     response.cookies.set("lensRefreshToken", result.refreshToken, {
       httpOnly: true,
       secure,
-      sameSite: "lax",
+      sameSite: "strict",
       path: "/",
       maxAge: 60 * 60 * 24 * 30, // 30 days
     });

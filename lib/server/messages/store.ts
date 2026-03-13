@@ -215,3 +215,15 @@ export async function deleteMessages(actorAddress: string) {
   }
   return { removed };
 }
+
+/** Redact a single message by ID (moderation action). Replaces content with a tombstone. */
+export async function redactMessageById(messageId: string) {
+  const store = await loadStore();
+  const message = store.find((m) => m.id === messageId);
+  if (!message) return { ok: false as const, error: "Message not found" };
+
+  message.content = "[This message has been removed by moderation]";
+  cache = sortMessages(store);
+  await saveStore(cache);
+  return { ok: true as const };
+}

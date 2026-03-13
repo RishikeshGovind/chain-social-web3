@@ -10,6 +10,7 @@ import {
 } from "@/lib/server/messages/store";
 import { createNotification } from "@/lib/server/notifications/store";
 import { logger } from "@/lib/server/logger";
+import { evaluateTextSafety, isAddressBanned } from "@/lib/server/moderation/store";
 
 async function parseJsonBody(req: Request): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
   try {
@@ -38,11 +39,26 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (await isAddressBanned(actor)) {
+    return NextResponse.json({ error: "Your account is restricted from messaging." }, { status: 403 });
+  }
+
   const { searchParams } = new URL(req.url);
   const peer = searchParams.get("peer")?.trim();
-  const limit = Number.parseInt(searchParams.get("limit") ?? "100", 10);
+  const rawLimit = Number.parseInt(searchParams.get("limit") ?? "100", 10);
+  const limit = Number.isNaN(rawLimit) ? 100 : Math.max(1, Math.min(rawLimit, 200));
 
-  const conversations = await listConversations(actor, { limit });
+  const rawConversations = await listConversations(actor, { limit });
+  const conversations = (
+    await Promise.all(
+      rawConversations.map(async (conversation) => ({
+        conversation,
+        banned: await isAddressBanned(conversation.peerAddress),
+      }))
+    )
+  )
+    .filter((item) => !item.banned)
+    .map((item) => item.conversation);
   if (!peer) {
     return NextResponse.json({ actor, conversations, messages: [] });
   }
@@ -52,16 +68,29 @@ export async function GET(req: Request) {
   }
 
   const normalizedPeer = normalizeAddress(peer);
+  if (await isAddressBanned(normalizedPeer)) {
+    return NextResponse.json({ error: "Conversation unavailable" }, { status: 404 });
+  }
   await markConversationRead(actor, normalizedPeer);
   const [messages, refreshedConversations] = await Promise.all([
     listConversation(actor, normalizedPeer),
     listConversations(actor, { limit }),
   ]);
+  const visibleConversations = (
+    await Promise.all(
+      refreshedConversations.map(async (conversation) => ({
+        conversation,
+        banned: await isAddressBanned(conversation.peerAddress),
+      }))
+    )
+  )
+    .filter((item) => !item.banned)
+    .map((item) => item.conversation);
 
   return NextResponse.json({
     actor,
     peerAddress: normalizedPeer,
-    conversations: refreshedConversations,
+    conversations: visibleConversations,
     messages,
   });
 }
@@ -86,8 +115,37 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
   const body = parsed.body as Record<string, unknown>;
-  const recipientAddress =
-    typeof body?.recipientAddress === "string" ? normalizeAddress(body.recipientAddress) : "";
+  const rawRecipient = typeof body?.recipientAddress === "string" ? body.recipientAddress.trim() : "";
+  if (!rawRecipient || !isValidAddress(rawRecipient)) {
+    return NextResponse.json({ error: "Invalid recipient address" }, { status: 400 });
+  }
+  const recipientAddress = normalizeAddress(rawRecipient);
+  if (await isAddressBanned(recipientAddress)) {
+    return NextResponse.json({ error: "Recipient is unavailable." }, { status: 403 });
+  }
+  const safety = await evaluateTextSafety({
+    address: actor,
+    text: typeof body?.content === "string" ? body.content : "",
+    type: "message",
+  });
+  if (safety.thresholdTriggered) {
+    return NextResponse.json(
+      { error: "Messaging restricted due to unusual activity. Try again later." },
+      { status: 429 }
+    );
+  }
+  if (safety.decision === "block") {
+    return NextResponse.json(
+      { error: safety.reasons[0] ?? "Message blocked by safety system." },
+      { status: 400 }
+    );
+  }
+  if (safety.decision === "review") {
+    return NextResponse.json(
+      { error: "Message held by automated safety checks. Please revise it and try again." },
+      { status: 400 }
+    );
+  }
 
   const result = await sendDirectMessage({
     senderAddress: actor,
@@ -111,10 +169,20 @@ export async function POST(req: Request) {
     metadata: { messageId: result.message.id },
   });
 
-  const [messages, conversations] = await Promise.all([
+  const [messages, rawConversations] = await Promise.all([
     listConversation(actor, recipientAddress),
     listConversations(actor),
   ]);
+  const conversations = (
+    await Promise.all(
+      rawConversations.map(async (conversation) => ({
+        conversation,
+        banned: await isAddressBanned(conversation.peerAddress),
+      }))
+    )
+  )
+    .filter((item) => !item.banned)
+    .map((item) => item.conversation);
 
   return NextResponse.json({
     success: true,

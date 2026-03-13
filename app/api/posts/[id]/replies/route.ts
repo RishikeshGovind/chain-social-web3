@@ -13,6 +13,12 @@ import { fetchLensReplies } from "@/lib/lens/feed";
 import { notifyPostReplied } from "@/lib/server/notifications/helpers";
 import { logger } from "@/lib/server/logger";
 import {
+  evaluateTextSafety,
+  filterVisibleReplies,
+  isAddressBanned,
+  moderateIncomingReplies,
+} from "@/lib/server/moderation/store";
+import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
   isTokenExpired,
@@ -164,6 +170,56 @@ function normalizeText(value: string) {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+const LOCAL_REPLIES_TIMEOUT_MS = Number.parseInt(
+  process.env.CHAINSOCIAL_LOCAL_REPLIES_TIMEOUT_MS ?? "700",
+  10
+);
+
+function safeTimeout(value: number, fallback: number) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function isTimeoutError(error: unknown) {
+  return error instanceof Error && error.message.toLowerCase().includes("timed out");
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return (await Promise.race([promise, timeoutPromise])) as T;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+type TimingMap = Record<string, number>;
+
+function createTimings(enabled: boolean) {
+  const startedAt = Date.now();
+  const marks = new Map<string, number>();
+
+  return {
+    start(label: string) {
+      if (!enabled) return;
+      marks.set(label, Date.now());
+    },
+    end(label: string, bucket: TimingMap) {
+      if (!enabled) return;
+      const start = marks.get(label);
+      if (start === undefined) return;
+      bucket[label] = Date.now() - start;
+      marks.delete(label);
+    },
+    total(bucket: TimingMap) {
+      if (!enabled) return;
+      bucket.total = Date.now() - startedAt;
+    },
+  };
+}
+
 async function confirmLensPostById(id: string, accessToken: string): Promise<boolean> {
   const queryVariants: Array<{ query: string; variables: Record<string, unknown> }> = [
     {
@@ -313,6 +369,9 @@ export async function GET(
     const { searchParams } = new URL(req.url);
     const limit = Number.parseInt(searchParams.get("limit") ?? "20", 10);
     const cursor = searchParams.get("cursor") ?? undefined;
+    const timingEnabled = searchParams.get("timing") === "1";
+    const timings: TimingMap = {};
+    const timer = createTimings(timingEnabled);
     const boundedLimit = Number.isNaN(limit) ? 20 : limit;
 
     const useLensData =
@@ -322,17 +381,38 @@ export async function GET(
     if (useLensData) {
       try {
         const accessToken = await getLensAccessTokenFromCookie();
+        timer.start("lensRepliesFetch");
         const lensData = await fetchLensReplies({
           postId,
           limit: boundedLimit,
           cursor,
           accessToken: accessToken ?? undefined,
         });
-        const localData = await listReplies({
-          postId,
-          limit: boundedLimit,
-          cursor,
-        });
+        timer.end("lensRepliesFetch", timings);
+        timer.start("localRepliesFetch");
+        const localData = await withTimeout(
+          listReplies({
+            postId,
+            limit: boundedLimit,
+            cursor,
+          }),
+          safeTimeout(LOCAL_REPLIES_TIMEOUT_MS, 700),
+          "local replies fetch"
+        )
+          .then((result) => {
+            timer.end("localRepliesFetch", timings);
+            return result;
+          })
+          .catch((localError) => {
+            timer.end("localRepliesFetch", timings);
+            const message =
+              localError instanceof Error ? localError.message : "unknown local replies error";
+            logger.warn("posts.replies.local_merge_skipped", {
+              error: message,
+              timedOut: isTimeoutError(localError),
+            });
+            return { replies: [], nextCursor: null };
+          });
         const merged = [...(lensData.replies ?? []), ...(localData.replies ?? [])]
           .sort((a, b) => {
             const timeDelta = toTimestampMs(b.timestamp) - toTimestampMs(a.timestamp);
@@ -341,10 +421,20 @@ export async function GET(
           })
           .filter((reply, index, arr) => arr.findIndex((r) => r.id === reply.id) === index)
           .slice(0, boundedLimit);
+        timer.start("filterVisibleReplies");
+        const filteredReplies = await filterVisibleReplies(merged);
+        timer.end("filterVisibleReplies", timings);
+        timer.start("moderateIncomingReplies");
+        const visibleReplies = await moderateIncomingReplies(filteredReplies);
+        timer.end("moderateIncomingReplies", timings);
         return NextResponse.json({
-          replies: merged,
+          replies: visibleReplies,
           nextCursor: lensData.nextCursor ?? localData.nextCursor ?? null,
           source: "lens",
+          ...(timingEnabled ? { timings: (() => {
+            timer.total(timings);
+            return timings;
+          })() } : {}),
         });
       } catch (lensError) {
         const message =
@@ -355,11 +445,13 @@ export async function GET(
 
     let data;
     try {
+      timer.start("localRepliesFetch");
       data = await listReplies({
         postId,
         limit: boundedLimit,
         cursor,
       });
+      timer.end("localRepliesFetch", timings);
     } catch (localError) {
       const localMessage =
         localError instanceof Error ? localError.message : "local replies unavailable";
@@ -371,7 +463,20 @@ export async function GET(
       });
     }
 
-    return NextResponse.json(data);
+    timer.start("filterVisibleReplies");
+    const filteredReplies = await filterVisibleReplies(data.replies ?? []);
+    timer.end("filterVisibleReplies", timings);
+    timer.start("moderateIncomingReplies");
+    const visibleReplies = await moderateIncomingReplies(filteredReplies);
+    timer.end("moderateIncomingReplies", timings);
+    return NextResponse.json({
+      ...data,
+      replies: visibleReplies,
+      ...(timingEnabled ? { timings: (() => {
+        timer.total(timings);
+        return timings;
+      })() } : {}),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load replies";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -388,6 +493,13 @@ export async function POST(
       return NextResponse.json(
         { error: "Unauthorized. Connect Lens before replying." },
         { status: 401 }
+      );
+    }
+
+    if (await isAddressBanned(actorAddress)) {
+      return NextResponse.json(
+        { error: "Your account is restricted from replying." },
+        { status: 403 }
       );
     }
 
@@ -414,6 +526,29 @@ export async function POST(
     const parsedContent = parseAndValidateContent(body?.content);
     if (!parsedContent.ok) {
       return NextResponse.json({ error: parsedContent.error }, { status: 400 });
+    }
+    const safety = await evaluateTextSafety({
+      address: actorAddress,
+      text: parsedContent.content,
+      type: "reply",
+    });
+    if (safety.thresholdTriggered) {
+      return NextResponse.json(
+        { error: "Replying restricted due to unusual activity. Try again later." },
+        { status: 429 }
+      );
+    }
+    if (safety.decision === "block") {
+      return NextResponse.json(
+        { error: safety.reasons[0] ?? "Reply blocked by safety system." },
+        { status: 400 }
+      );
+    }
+    if (safety.decision === "review") {
+      return NextResponse.json(
+        { error: "Reply held by automated safety checks. Please edit and try again." },
+        { status: 400 }
+      );
     }
 
     const username =

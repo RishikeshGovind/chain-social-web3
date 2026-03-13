@@ -6,7 +6,7 @@ import { appendComplianceAuditEvent, runComplianceRetention } from "@/lib/server
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 export async function POST(req: Request) {
-  const operator = await getAdminOperator();
+  const operator = await getAdminOperator(req.headers);
   if (!operator && !isLegacyAdminTokenRequest(req.headers)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: NO_STORE_HEADERS });
   }

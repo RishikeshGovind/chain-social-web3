@@ -202,3 +202,13 @@ export async function checkMessageRateLimit(address: string): Promise<RateLimitR
     windowError: "Message rate limit reached. Try again in a minute.",
   });
 }
+
+export async function checkReportRateLimit(address: string): Promise<RateLimitResult> {
+  return checkRateLimit(address, {
+    keyPrefix: "report",
+    cooldownMs: 5_000,
+    perMinute: 5,
+    cooldownError: "Submitting reports too quickly. Please wait a moment.",
+    windowError: "Report rate limit reached. Try again in a few minutes.",
+  });
+}

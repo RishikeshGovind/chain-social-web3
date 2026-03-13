@@ -52,46 +52,55 @@ const nextConfig = {
   
   // Security headers for browser-facing routes.
   async headers() {
+    const securityHeaders = [
+      {
+        key: 'X-Content-Type-Options',
+        value: 'nosniff',
+      },
+      {
+        key: 'Referrer-Policy',
+        value: 'strict-origin-when-cross-origin',
+      },
+      {
+        key: 'X-Frame-Options',
+        value: 'DENY',
+      },
+      {
+        key: 'Content-Security-Policy',
+        value: [
+          "default-src 'self'",
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://auth.privy.io",
+          "style-src 'self' 'unsafe-inline'",
+          "img-src 'self' https: data: blob:",
+          "font-src 'self' data:",
+          "connect-src 'self' https://api.lens.xyz https://api.lens.dev https://*.privy.io https://*.upstash.io wss://*.walletconnect.com https://*.walletconnect.com",
+          "frame-src 'self' https://auth.privy.io https://verify.walletconnect.com",
+          "object-src 'none'",
+          "base-uri 'self'",
+          "form-action 'self'",
+          "frame-ancestors 'none'",
+          "upgrade-insecure-requests",
+        ].join('; '),
+      },
+      {
+        key: 'Permissions-Policy',
+        value: 'camera=(), microphone=(), geolocation=()',
+      },
+    ];
+
     return [
       {
+        // Security headers on all routes (no Cache-Control here — let Next.js handle static caching)
         source: '/:path*',
+        headers: securityHeaders,
+      },
+      {
+        // Only API routes get no-store to prevent caching sensitive data
+        source: '/api/:path*',
         headers: [
-          {
-            key: 'X-Content-Type-Options',
-            value: 'nosniff',
-          },
-          {
-            key: 'Referrer-Policy',
-            value: 'strict-origin-when-cross-origin',
-          },
-          {
-            key: 'X-Frame-Options',
-            value: 'DENY',
-          },
           {
             key: 'Cache-Control',
             value: 'no-store',
-          },
-          {
-            key: 'Content-Security-Policy',
-            value: [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://auth.privy.io",
-              "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' https: data: blob:",
-              "font-src 'self' data:",
-              "connect-src 'self' https://api.lens.xyz https://api.lens.dev https://*.privy.io https://*.upstash.io wss://*.walletconnect.com https://*.walletconnect.com",
-              "frame-src 'self' https://auth.privy.io https://verify.walletconnect.com",
-              "object-src 'none'",
-              "base-uri 'self'",
-              "form-action 'self'",
-              "frame-ancestors 'none'",
-              "upgrade-insecure-requests",
-            ].join('; '),
-          },
-          {
-            key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(), geolocation=()',
           },
         ],
       },

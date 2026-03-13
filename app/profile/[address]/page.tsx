@@ -2,12 +2,13 @@
 
 import Image from "next/image";
 import { notFound } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import PostMedia from "@/components/PostMedia";
 import { useUserSettings } from "@/lib/client/settings";
+import ReportButton from "@/components/ReportButton";
 
 type ProfilePost = {
   id: string;
@@ -33,6 +34,15 @@ type FollowStats = {
   isFollowing: boolean;
   isSelf: boolean;
 };
+
+type PublicTrust = {
+  trustScore: number;
+  riskLevel: "low" | "medium" | "high";
+  labels: string[];
+};
+
+const PROFILE_INITIAL_PAGE_SIZE = 10;
+const PROFILE_LOAD_MORE_SIZE = 10;
 
 function sanitizeDisplayContent(raw?: string) {
   if (!raw) return "";
@@ -125,6 +135,11 @@ export default function UserProfilePage({ params }: { params: { address: string 
   const [website, setWebsite] = useState<string>("");
   const [coverImage, setCoverImage] = useState<string>("");
   const [avatar, setAvatar] = useState<string>("");
+  const [trust, setTrust] = useState<PublicTrust>({
+    trustScore: 78,
+    riskLevel: "low",
+    labels: [],
+  });
   const [viewerLensAccountAddress, setViewerLensAccountAddress] = useState<string>("");
   const [followStats, setFollowStats] = useState<FollowStats>({
     followers: 0,
@@ -136,6 +151,9 @@ export default function UserProfilePage({ params }: { params: { address: string 
   const [error, setError] = useState<string | null>(null);
   const { authenticated, user } = usePrivy();
   const { settings } = useUserSettings();
+  const nextCursorRef = useRef<string | null>(null);
+  const loadingMoreRef = useRef(false);
+  const loadMoreAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const viewerAddress = useMemo(
     () => user?.wallet?.address?.toLowerCase() ?? "",
@@ -156,6 +174,14 @@ export default function UserProfilePage({ params }: { params: { address: string 
   const isOwnProfile =
     !!targetAddress &&
     (targetAddress === viewerAddress || targetAddress === viewerLensAccountAddress);
+
+  useEffect(() => {
+    nextCursorRef.current = nextCursor;
+  }, [nextCursor]);
+
+  useEffect(() => {
+    loadingMoreRef.current = loadingMore;
+  }, [loadingMore]);
 
   useEffect(() => {
     if (!viewerAddress) {
@@ -197,6 +223,19 @@ export default function UserProfilePage({ params }: { params: { address: string 
           setCoverImage(profileData.profile.coverImage || "");
           setAvatar(profileData.profile.avatar || "");
         }
+        if (profileData.trust) {
+          setTrust({
+            trustScore:
+              typeof profileData.trust.trustScore === "number"
+                ? profileData.trust.trustScore
+                : 78,
+            riskLevel:
+              profileData.trust.riskLevel === "high" || profileData.trust.riskLevel === "medium"
+                ? profileData.trust.riskLevel
+                : "low",
+            labels: Array.isArray(profileData.trust.labels) ? profileData.trust.labels : [],
+          });
+        }
         setFollowStats({
           followers: followData.followers || 0,
           following: followData.following || 0,
@@ -233,7 +272,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
 
         const responses = await Promise.all(
           authors.map(async (author) => {
-            const lensData = await fetch(`/api/posts?author=${author}&limit=20&quick=1`, {
+            const lensData = await fetch(`/api/posts?author=${author}&limit=${PROFILE_INITIAL_PAGE_SIZE}&quick=1`, {
               cache: "no-store",
             }).then((res) => res.json());
             const effectiveAuthor =
@@ -252,7 +291,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
         const localAuthor = primary?.effectiveAuthor ?? primaryAuthor;
         try {
           const localData = await fetchJsonWithTimeout(
-            `/api/posts?author=${localAuthor}&limit=20&source=local`,
+            `/api/posts?author=${localAuthor}&limit=${PROFILE_INITIAL_PAGE_SIZE}&source=local`,
             1200
           );
           if (Array.isArray(localData?.posts)) {
@@ -327,7 +366,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
     try {
       const query = new URLSearchParams({
         author: resolvedAuthor,
-        limit: "50",
+        limit: String(PROFILE_LOAD_MORE_SIZE),
         cursor: nextCursor,
       });
       if (postsSource) query.set("source", postsSource);
@@ -344,6 +383,24 @@ export default function UserProfilePage({ params }: { params: { address: string 
       setLoadingMore(false);
     }
   }
+
+  useEffect(() => {
+    const anchor = loadMoreAnchorRef.current;
+    if (!anchor) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting) return;
+        if (!nextCursorRef.current || loadingMoreRef.current) return;
+        void loadMorePosts();
+      },
+      { rootMargin: "280px 0px" }
+    );
+
+    observer.observe(anchor);
+    return () => observer.disconnect();
+  }, [resolvedAuthor, postsSource]);
 
   async function handleToggleFollow() {
     if (!authenticated || !viewerAddress || followStats.isSelf) return;
@@ -440,13 +497,21 @@ export default function UserProfilePage({ params }: { params: { address: string 
           )}
 
           {!isOwnProfile && authenticated && (
-            <button
-              onClick={() => void handleToggleFollow()}
-              disabled={followLoading}
-              className="mb-3 rounded-full border border-white/10 px-4 py-2 text-sm transition hover:bg-white/[0.06] disabled:opacity-50"
-            >
-              {followStats.isFollowing ? "Unfollow" : "Follow"}
-            </button>
+            <div className="mb-3 flex items-center gap-2">
+              <button
+                onClick={() => void handleToggleFollow()}
+                disabled={followLoading}
+                className="rounded-full border border-white/10 px-4 py-2 text-sm transition hover:bg-white/[0.06] disabled:opacity-50"
+              >
+                {followStats.isFollowing ? "Unfollow" : "Follow"}
+              </button>
+              <ReportButton
+                entityType="profile"
+                entityId={params.address}
+                targetAddress={params.address}
+                compact
+              />
+            </div>
           )}
 
           {bio && (
@@ -468,7 +533,7 @@ export default function UserProfilePage({ params }: { params: { address: string 
             )}
           </div>
 
-          <div className="mt-5 grid w-full max-w-lg grid-cols-3 gap-3">
+          <div className="mt-5 grid w-full max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
               <div className="text-xl font-bold text-white">{sortedPosts.length}</div>
               <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Posts</div>
@@ -481,7 +546,27 @@ export default function UserProfilePage({ params }: { params: { address: string 
               <div className="text-xl font-bold text-white">{followStats.following}</div>
               <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Following</div>
             </div>
+            <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-4 text-center">
+              <div className="text-xl font-bold text-white">{trust.trustScore}</div>
+              <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Trust</div>
+              <div className="mt-2 text-[10px] uppercase tracking-[0.16em] text-cyan-200">
+                {trust.riskLevel === "high" ? "High risk" : trust.riskLevel === "medium" ? "Monitor" : "Low risk"}
+              </div>
+            </div>
           </div>
+
+          {trust.labels.length > 0 && (
+            <div className="mt-3 flex flex-wrap justify-center gap-2">
+              {trust.labels.map((label) => (
+                <span
+                  key={label}
+                  className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-gray-300"
+                >
+                  {label.replaceAll("-", " ")}
+                </span>
+              ))}
+            </div>
+          )}
 
           {sortedPosts.length > 0 && (
             <div className="text-xs text-gray-500 mt-2">
@@ -546,20 +631,30 @@ export default function UserProfilePage({ params }: { params: { address: string 
                         />
                       </Link>
                       <div className="flex-1 min-w-0">
-                        <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
-                          <Link
-                            href={`/profile/${post.author.address}`}
-                            className="max-w-[18rem] break-all text-[15px] font-semibold text-white hover:underline"
-                          >
-                            {primaryAuthorLabel}
-                          </Link>
-                          <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">
-                            {hasMedia ? "Media post" : "Text post"}
-                          </span>
-                          {secondaryAuthorLabel && (
-                            <span className="text-xs text-gray-500 break-all max-w-[18rem]">
-                              {secondaryAuthorLabel}
+                        <div className="mb-3 flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <Link
+                              href={`/profile/${post.author.address}`}
+                              className="max-w-[18rem] break-all text-[15px] font-semibold text-white hover:underline"
+                            >
+                              {primaryAuthorLabel}
+                            </Link>
+                            <span className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">
+                              {hasMedia ? "Media post" : "Text post"}
                             </span>
+                            {secondaryAuthorLabel && (
+                              <span className="text-xs text-gray-500 break-all max-w-[18rem]">
+                                {secondaryAuthorLabel}
+                              </span>
+                            )}
+                          </div>
+                          {!isOwnProfile && (
+                            <ReportButton
+                              entityType="post"
+                              entityId={post.id}
+                              targetAddress={post.author.address}
+                              compact
+                            />
                           )}
                         </div>
 
@@ -585,13 +680,16 @@ export default function UserProfilePage({ params }: { params: { address: string 
                 })()
               ))}
               {nextCursor && (
-                <button
-                  onClick={() => void loadMorePosts()}
-                  disabled={loadingMore}
-                  className="w-full rounded-full border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-gray-200 transition hover:bg-white/[0.06] disabled:opacity-50"
-                >
-                  {loadingMore ? "Loading..." : "Load more posts"}
-                </button>
+                <>
+                  <div ref={loadMoreAnchorRef} className="h-1 w-full" />
+                  <button
+                    onClick={() => void loadMorePosts()}
+                    disabled={loadingMore}
+                    className="w-full rounded-full border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-gray-200 transition hover:bg-white/[0.06] disabled:opacity-50"
+                  >
+                    {loadingMore ? "Loading..." : "Load more posts"}
+                  </button>
+                </>
               )}
             </div>
           )}

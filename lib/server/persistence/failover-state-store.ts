@@ -69,7 +69,11 @@ export class FailoverStateStore implements StateStore {
 
     try {
       await this.primary.write(state);
-      await this.fallback.write(state);
+      // Write to fallback asynchronously — don't block the hot path with disk I/O
+      this.fallback.write(state).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn("state_store.fallback_write_failed", { prefix: this.warnPrefix, error: message });
+      });
     } catch (error) {
       this.openCircuit(error);
       await this.fallback.write(state);
