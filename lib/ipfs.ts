@@ -101,8 +101,8 @@ function createDataUri(file: File): Promise<string> {
 }
 
 export async function uploadToIPFS(file: File): Promise<string> {
-  const pinataJwt = process.env.PINATA_JWT || process.env.NEXT_PUBLIC_PINATA_JWT;
-  const web3StorageKey = process.env.WEB3_STORAGE_TOKEN || process.env.NEXT_PUBLIC_WEB3_STORAGE_TOKEN;
+  const pinataJwt = process.env.PINATA_JWT;
+  const web3StorageKey = process.env.WEB3_STORAGE_TOKEN;
 
   // Try Pinata first (if API key available)
   if (pinataJwt) {
@@ -135,15 +135,44 @@ export async function uploadToIPFS(file: File): Promise<string> {
   return dataUri;
 }
 
+// Validate IPFS CID format (CIDv0 or CIDv1, optionally with subpath)
+function isValidCid(cid: string): boolean {
+  const cidPart = cid.split("/")[0].split("?")[0];
+  // CIDv0: base58btc, starts with Qm, 46 chars
+  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(cidPart)) return true;
+  // CIDv1: base32 lowercase, starts with b, or base36 starting with k
+  if (/^b[a-z2-7]{58,}$/.test(cidPart)) return true;
+  if (/^k[a-z0-9]{50,}$/.test(cidPart)) return true;
+  // CIDv1 base58btc: starts with z
+  if (/^z[1-9A-HJ-NP-Za-km-z]{46,}$/.test(cidPart)) return true;
+  // Relaxed: alphanumeric CIDs from various IPFS implementations
+  if (/^[a-zA-Z0-9]{46,}$/.test(cidPart)) return true;
+  return false;
+}
+
+// Validate Arweave transaction ID (43-char base64url)
+function isValidArweaveId(id: string): boolean {
+  const txPart = id.split("/")[0].split("?")[0];
+  return /^[a-zA-Z0-9_-]{43}$/.test(txPart);
+}
+
 // Convert IPFS URI to HTTP gateway URL
 export function ipfsToHttp(uri: string): string {
   if (uri.startsWith("ipfs://")) {
     const cid = uri.replace("ipfs://", "");
+    if (!isValidCid(cid)) {
+      logger.warn("ipfs.invalid_cid", { cid: cid.slice(0, 80) });
+      return uri;
+    }
     return `${IPFS_GATEWAYS[0]}${cid}`;
   }
   if (uri.startsWith("ar://")) {
-    const path = uri.replace("ar://", "");
-    return `https://arweave.net/${path}`;
+    const arId = uri.replace("ar://", "");
+    if (!isValidArweaveId(arId)) {
+      logger.warn("ipfs.invalid_arweave_id", { id: arId.slice(0, 80) });
+      return uri;
+    }
+    return `https://arweave.net/${arId}`;
   }
   return uri;
 }

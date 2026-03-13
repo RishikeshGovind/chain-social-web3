@@ -34,6 +34,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# runtime data & user uploads – NEVER commit personal data or user content
+/data/posts.json
+/public/uploads/
+/private-uploads/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

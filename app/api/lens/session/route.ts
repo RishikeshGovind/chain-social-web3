@@ -120,14 +120,14 @@ export async function GET() {
       response.cookies.set("lensAccessToken", accessToken, {
         httpOnly: true,
         secure,
-        sameSite: "lax",
+        sameSite: "strict",
         path: "/",
         maxAge: 60 * 60 * 24,
       });
       response.cookies.set("lensRefreshToken", refreshToken, {
         httpOnly: true,
         secure,
-        sameSite: "lax",
+        sameSite: "strict",
         path: "/",
         maxAge: 60 * 60 * 24 * 30,
       });

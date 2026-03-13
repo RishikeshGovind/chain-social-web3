@@ -45,7 +45,8 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const peer = searchParams.get("peer")?.trim();
-  const limit = Number.parseInt(searchParams.get("limit") ?? "100", 10);
+  const rawLimit = Number.parseInt(searchParams.get("limit") ?? "100", 10);
+  const limit = Number.isNaN(rawLimit) ? 100 : Math.max(1, Math.min(rawLimit, 200));
 
   const rawConversations = await listConversations(actor, { limit });
   const conversations = (
@@ -114,8 +115,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
   const body = parsed.body as Record<string, unknown>;
-  const recipientAddress =
-    typeof body?.recipientAddress === "string" ? normalizeAddress(body.recipientAddress) : "";
+  const rawRecipient = typeof body?.recipientAddress === "string" ? body.recipientAddress.trim() : "";
+  if (!rawRecipient || !isValidAddress(rawRecipient)) {
+    return NextResponse.json({ error: "Invalid recipient address" }, { status: 400 });
+  }
+  const recipientAddress = normalizeAddress(rawRecipient);
   if (await isAddressBanned(recipientAddress)) {
     return NextResponse.json({ error: "Recipient is unavailable." }, { status: 403 });
   }

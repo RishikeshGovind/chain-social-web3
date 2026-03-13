@@ -207,9 +207,10 @@ export async function GET(req: Request) {
     const postId = searchParams.get("postId") ?? undefined;
     const source = searchParams.get("source");
     const quick = searchParams.get("quick") === "1";
-    const debug = searchParams.get("debug") === "1";
-    const debugSchema = searchParams.get("debugSchema") === "1";
-    const timingEnabled = searchParams.get("timing") === "1";
+    // Debug/schema introspection only available in non-production environments
+    const isProduction = process.env.NODE_ENV === "production";
+    const debug = !isProduction && searchParams.get("debug") === "1";
+    const timingEnabled = !isProduction && searchParams.get("timing") === "1";
     const timings: TimingMap = {};
     const timer = createTimings(timingEnabled);
 
@@ -219,7 +220,7 @@ export async function GET(req: Request) {
     const actorForCache = await getActorAddressFromLensCookie().catch(() => null);
 
     // Check feed cache for non-debug, non-schema requests
-    const cacheKey = !debug && !debugSchema
+    const cacheKey = !debug
       ? getFeedCacheKey({ limit: String(boundedLimit), cursor, author, postId, source: source ?? undefined, actor: actorForCache ?? "anon" })
       : null;
     if (cacheKey) {
@@ -248,66 +249,6 @@ export async function GET(req: Request) {
           ? (await getLensAccountAddress(author)) ?? author
           : undefined;
         timer.end("lensAccountLookup", timings);
-        if (debugSchema) {
-          const schemaQuery = `
-            query LensSchemaDebug {
-              postType: __type(name: "Post") {
-                name
-                fields {
-                  name
-                  type {
-                    kind
-                    name
-                    ofType { kind name }
-                  }
-                }
-              }
-              anyPostType: __type(name: "AnyPost") {
-                name
-                possibleTypes { name }
-                fields {
-                  name
-                  type {
-                    kind
-                    name
-                    ofType { kind name }
-                  }
-                }
-              }
-              postsRequestType: __type(name: "PostsRequest") {
-                name
-                inputFields {
-                  name
-                  type {
-                    kind
-                    name
-                    ofType { kind name }
-                  }
-                }
-              }
-              postMetadataUnion: __type(name: "PostMetadata") {
-                name
-                kind
-                possibleTypes {
-                  name
-                }
-              }
-              postMetadataTypes: __type(name: "PostMetadataV3") {
-                name
-                fields {
-                  name
-                  type {
-                    kind
-                    name
-                    ofType { kind name }
-                  }
-                }
-              }
-            }
-          `;
-          const schemaData = await lensRequest(schemaQuery, undefined, accessToken ?? undefined);
-          return NextResponse.json({ source: "lens", schemaData });
-        }
 
         // Start Lens fetch and local fetch in parallel (local is best-effort for merge)
         let allowLocalEnrichment = isPrimaryStateStoreHealthy() && !quick;

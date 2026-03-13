@@ -9,11 +9,17 @@ import {
   markPostOutboxProcessing,
   markPostOutboxPublished,
 } from "@/lib/posts/store";
-import { isValidAddress } from "@/lib/posts/content";
+import { isValidAddress, parseAndValidateContent } from "@/lib/posts/content";
+import { validateMediaUrls } from "@/lib/posts/validation";
 import {
   getActorAddressFromLensCookie,
   getLensAccessTokenFromCookie,
 } from "@/lib/server/auth/lens-actor";
+import {
+  evaluateTextSafety,
+  isAddressBanned,
+  isMediaBlockedOrQuarantined,
+} from "@/lib/server/moderation/store";
 
 async function getLensAccountAddress(walletAddress: string): Promise<string | null> {
   try {
@@ -131,9 +137,61 @@ export async function POST(req: Request) {
 
       let published = 0;
       let failed = 0;
+      let skipped = 0;
+
+      if (await isAddressBanned(actorAddress)) {
+        return NextResponse.json(
+          { error: "Your account is restricted from publishing." },
+          { status: 403 }
+        );
+      }
+
       for (const item of candidates) {
         await markPostOutboxProcessing(item.id);
         try {
+          // Re-run current moderation checks on legacy content
+          const contentCheck = parseAndValidateContent(item.content);
+          if (!contentCheck.ok) {
+            await markPostOutboxFailed(item.id, `Content rejected: ${contentCheck.error}`);
+            skipped += 1;
+            continue;
+          }
+
+          const safety = await evaluateTextSafety({
+            text: contentCheck.content,
+            address: actorAddress,
+            type: "post",
+          });
+          if (safety.decision === "block" || safety.decision === "review") {
+            await markPostOutboxFailed(
+              item.id,
+              safety.reasons[0] ?? "Blocked by current safety rules."
+            );
+            skipped += 1;
+            continue;
+          }
+
+          if (item.media && item.media.length > 0) {
+            const mediaCheck = validateMediaUrls(item.media);
+            if (!mediaCheck.ok) {
+              await markPostOutboxFailed(item.id, `Media rejected: ${mediaCheck.error}`);
+              skipped += 1;
+              continue;
+            }
+            let mediaBlocked = false;
+            for (const url of mediaCheck.urls) {
+              if (await isMediaBlockedOrQuarantined(url)) {
+                mediaBlocked = true;
+                break;
+              }
+            }
+            if (mediaBlocked) {
+              await markPostOutboxFailed(item.id, "Media blocked or pending review.");
+              skipped += 1;
+              continue;
+            }
+          }
+
           const post = await createLensPost({
             content: item.content,
             media: item.media,
@@ -158,6 +216,7 @@ export async function POST(req: Request) {
         attempted: candidates.length,
         published,
         failed,
+        skipped,
         remainingLegacy: legacyPosts.length,
         outbox,
       });

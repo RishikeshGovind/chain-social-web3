@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 
 type AppShellProps = {
@@ -14,7 +14,8 @@ type AppShellProps = {
     | "Lists"
     | "Settings"
     | "Profile"
-    | "Help";
+    | "Help"
+    | "Admin";
   children: ReactNode;
   rightSidebar?: ReactNode;
 };
@@ -22,6 +23,19 @@ type AppShellProps = {
 export default function AppShell({ active, children, rightSidebar }: AppShellProps) {
   const { authenticated, user, logout } = usePrivy();
   const profileHref = user?.wallet?.address ? `/profile/${user.wallet.address}` : null;
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const address = user?.wallet?.address;
+    if (!authenticated || !address) {
+      setIsAdmin(false);
+      return;
+    }
+    fetch(`/api/admin/check?address=${encodeURIComponent(address)}`)
+      .then((res) => res.json())
+      .then((data) => setIsAdmin(!!data?.isAdmin))
+      .catch(() => setIsAdmin(false));
+  }, [authenticated, user?.wallet?.address]);
 
   const navItems: Array<{ label: AppShellProps["active"]; href: string }> = [
     { label: "Home", href: "/feed" },
@@ -33,6 +47,7 @@ export default function AppShell({ active, children, rightSidebar }: AppShellPro
     ...(profileHref ? [{ label: "Profile" as const, href: profileHref }] : []),
     { label: "Settings", href: "/settings" },
     { label: "Help", href: "/help" },
+    ...(isAdmin ? [{ label: "Admin" as const, href: "/admin/moderation" }] : []),
   ];
 
   return (

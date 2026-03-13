@@ -34,7 +34,7 @@ export default function ReportButton({
   compact = false,
   className = "",
 }: ReportButtonProps) {
-  const { authenticated } = usePrivy();
+  const { authenticated, user } = usePrivy();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState<(typeof REPORT_REASONS)[number]["value"]>("spam");
   const [details, setDetails] = useState("");
@@ -118,6 +118,7 @@ export default function ReportButton({
           targetAddress,
           reason,
           details,
+          reporterAddress: user?.wallet?.address,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -127,6 +128,9 @@ export default function ReportButton({
       setMessage("Report submitted");
       setDetails("");
       setOpen(false);
+      window.dispatchEvent(
+        new CustomEvent("chainsocial:report", { detail: { entityType, entityId } })
+      );
     } catch (reportError) {
       setError(reportError instanceof Error ? reportError.message : "Failed to submit report");
     } finally {

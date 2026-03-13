@@ -453,21 +453,25 @@ export async function mapNodeToPost(
     mediaUrls = extractMediaFromMetadata(inlineMetadata);
   }
 
-  // Priority 2: Fetch from contentUri if content is still empty
-  if (!content && contentUri) {
+  // Fetch from contentUri when inline metadata did not include enough data.
+  if ((!content || !mediaUrls.length) && contentUri) {
     const normalized = normalizeMetadataUri(contentUri);
     metadataRaw = await fetchMetadata(normalized);
-    content = extractContent(metadataRaw);
+    if (!content) {
+      content = extractContent(metadataRaw);
+    }
     if (!mediaUrls.length) {
       mediaUrls = extractMediaFromMetadata(metadataRaw);
     }
   }
 
-  // Priority 3: Fetch from metadataUri if content is still empty
-  if (!content && metadataUri) {
+  // Fetch from metadataUri when content or media is still missing.
+  if ((!content || !mediaUrls.length) && metadataUri) {
     const normalized = normalizeMetadataUri(metadataUri);
     metadataRaw = await fetchMetadata(normalized);
-    content = extractContent(metadataRaw);
+    if (!content) {
+      content = extractContent(metadataRaw);
+    }
     if (!mediaUrls.length) {
       mediaUrls = extractMediaFromMetadata(metadataRaw);
     }
@@ -622,14 +626,12 @@ async function extractPosts(
   return { items: [], nextCursor: null };
 }
 
-const LENS_UPSTREAM_PAGE_SIZE = 10;
+const LENS_UPSTREAM_PAGE_SIZE = 50;
 
 // Lens v3 uses PageSize enum: TEN or FIFTY.
-// For interactive product surfaces we always fetch in TEN-sized upstream pages
-// and compose multiple pages ourselves when needed. That keeps cursor semantics
-// correct without silently moderating hidden 50-item batches.
+// FIFTY reduces round-trips and ensures enough posts survive moderation filtering.
 function getPageSize(): string {
-  return "TEN";
+  return "FIFTY";
 }
 
 function pageCountForTarget(limit: number) {
@@ -902,9 +904,27 @@ const FEED_QUERY_VARIANTS = [
               metadata {
                 __typename
                 ... on TextOnlyMetadata { content }
-                ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item } }
-                ... on VideoMetadata { content video { item } }
+                ... on ArticleMetadata {
+                  content
+                  attachments {
+                    ... on MediaImage { item }
+                    ... on MediaVideo { item }
+                  }
+                }
+                ... on ImageMetadata {
+                  content
+                  image { item }
+                  attachments {
+                    ... on MediaImage { item }
+                  }
+                }
+                ... on VideoMetadata {
+                  content
+                  video { item }
+                  attachments {
+                    ... on MediaVideo { item }
+                  }
+                }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -924,9 +944,27 @@ const FEED_QUERY_VARIANTS = [
                   metadata {
                     __typename
                     ... on TextOnlyMetadata { content }
-                    ... on ArticleMetadata { content }
-                    ... on ImageMetadata { content image { item } }
-                    ... on VideoMetadata { content video { item } }
+                    ... on ArticleMetadata {
+                      content
+                      attachments {
+                        ... on MediaImage { item }
+                        ... on MediaVideo { item }
+                      }
+                    }
+                    ... on ImageMetadata {
+                      content
+                      image { item }
+                      attachments {
+                        ... on MediaImage { item }
+                      }
+                    }
+                    ... on VideoMetadata {
+                      content
+                      video { item }
+                      attachments {
+                        ... on MediaVideo { item }
+                      }
+                    }
                     ... on AudioMetadata { content audio { item } }
                     ... on EmbedMetadata { content }
                     ... on LinkMetadata { content }
@@ -946,9 +984,27 @@ const FEED_QUERY_VARIANTS = [
                   metadata {
                     __typename
                     ... on TextOnlyMetadata { content }
-                    ... on ArticleMetadata { content }
-                    ... on ImageMetadata { content image { item } }
-                    ... on VideoMetadata { content video { item } }
+                    ... on ArticleMetadata {
+                      content
+                      attachments {
+                        ... on MediaImage { item }
+                        ... on MediaVideo { item }
+                      }
+                    }
+                    ... on ImageMetadata {
+                      content
+                      image { item }
+                      attachments {
+                        ... on MediaImage { item }
+                      }
+                    }
+                    ... on VideoMetadata {
+                      content
+                      video { item }
+                      attachments {
+                        ... on MediaVideo { item }
+                      }
+                    }
                     ... on AudioMetadata { content audio { item } }
                     ... on EmbedMetadata { content }
                     ... on LinkMetadata { content }
@@ -1054,9 +1110,27 @@ const AUTHOR_QUERY_VARIANTS = [
               metadata {
                 __typename
                 ... on TextOnlyMetadata { content }
-                ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item } }
-                ... on VideoMetadata { content video { item } }
+                ... on ArticleMetadata {
+                  content
+                  attachments {
+                    ... on MediaImage { item }
+                    ... on MediaVideo { item }
+                  }
+                }
+                ... on ImageMetadata {
+                  content
+                  image { item }
+                  attachments {
+                    ... on MediaImage { item }
+                  }
+                }
+                ... on VideoMetadata {
+                  content
+                  video { item }
+                  attachments {
+                    ... on MediaVideo { item }
+                  }
+                }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -1092,9 +1166,27 @@ const AUTHOR_QUERY_VARIANTS = [
               metadata {
                 __typename
                 ... on TextOnlyMetadata { content }
-                ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item } }
-                ... on VideoMetadata { content video { item } }
+                ... on ArticleMetadata {
+                  content
+                  attachments {
+                    ... on MediaImage { item }
+                    ... on MediaVideo { item }
+                  }
+                }
+                ... on ImageMetadata {
+                  content
+                  image { item }
+                  attachments {
+                    ... on MediaImage { item }
+                  }
+                }
+                ... on VideoMetadata {
+                  content
+                  video { item }
+                  attachments {
+                    ... on MediaVideo { item }
+                  }
+                }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -1130,9 +1222,27 @@ const AUTHOR_QUERY_VARIANTS = [
               metadata {
                 __typename
                 ... on TextOnlyMetadata { content }
-                ... on ArticleMetadata { content }
-                ... on ImageMetadata { content image { item } }
-                ... on VideoMetadata { content video { item } }
+                ... on ArticleMetadata {
+                  content
+                  attachments {
+                    ... on MediaImage { item }
+                    ... on MediaVideo { item }
+                  }
+                }
+                ... on ImageMetadata {
+                  content
+                  image { item }
+                  attachments {
+                    ... on MediaImage { item }
+                  }
+                }
+                ... on VideoMetadata {
+                  content
+                  video { item }
+                  attachments {
+                    ... on MediaVideo { item }
+                  }
+                }
                 ... on AudioMetadata { content audio { item } }
                 ... on EmbedMetadata { content }
                 ... on LinkMetadata { content }
@@ -1168,8 +1278,12 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
   // Global timeline should come from feed() so repost-driven items can surface.
   // For author/post-specific fetches we keep posts() behavior.
   if (!input.author && !input.postId) {
-    for (const variant of FEED_QUERY_VARIANTS) {
+    for (let vi = 0; vi < FEED_QUERY_VARIANTS.length; vi += 1) {
+      const variant = FEED_QUERY_VARIANTS[vi];
       try {
+        if (vi > 0) {
+          logger.warn("lens.feed.feed_variant_fallback", { variantIndex: vi, previousErrors: errors });
+        }
         const collected: Post[] = [];
         const collectedDebug: unknown[] = [];
         const seenIds = new Set<string>();
@@ -1208,8 +1322,12 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
   }
 
   if (normalizedAuthor) {
-    for (const variant of AUTHOR_QUERY_VARIANTS) {
+    for (let vi = 0; vi < AUTHOR_QUERY_VARIANTS.length; vi += 1) {
+      const variant = AUTHOR_QUERY_VARIANTS[vi];
       try {
+        if (vi > 0) {
+          logger.warn("lens.feed.author_variant_fallback", { variantIndex: vi, previousErrors: errors });
+        }
         const collected: Post[] = [];
         const collectedDebug: unknown[] = [];
         const seenIds = new Set<string>();
@@ -1250,8 +1368,12 @@ export async function fetchLensPosts(input: LensFetchInput): Promise<LensFeedOut
     }
   }
 
-  for (const variant of QUERY_VARIANTS) {
+  for (let vi = 0; vi < QUERY_VARIANTS.length; vi += 1) {
+    const variant = QUERY_VARIANTS[vi];
     try {
+      if (vi > 0) {
+        logger.warn("lens.feed.query_variant_fallback", { variantIndex: vi, previousErrors: errors });
+      }
       logger.debug("lens.feed.query_variant");
       if (normalizedAuthor) {
         const collected: Post[] = [];

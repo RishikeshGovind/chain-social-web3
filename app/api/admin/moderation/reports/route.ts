@@ -5,11 +5,12 @@ import {
   applyModerationAction,
   listModerationState,
 } from "@/lib/server/moderation/store";
+import { invalidateFeedCache } from "@/app/api/posts/route";
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 async function getAuthorizedOperator(headers: Headers) {
-  const operator = await getAdminOperator();
+  const operator = await getAdminOperator(headers);
   if (operator) return operator;
   if (isLegacyAdminTokenRequest(headers)) {
     return { address: "legacy-token", authMethod: "legacy-token" as const };
@@ -58,6 +59,8 @@ export async function PATCH(req: Request) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400, headers: NO_STORE_HEADERS });
   }
+
+  invalidateFeedCache();
 
   return NextResponse.json(
     {

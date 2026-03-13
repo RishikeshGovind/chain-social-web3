@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { normalizeAddress } from "@/lib/posts/content";
 import { appendComplianceAuditEvent } from "@/lib/server/compliance/store";
+import { redactMessageById } from "@/lib/server/messages/store";
 import { scanForDarknetContent } from "@/lib/server/moderation/darknet-detect";
 import { moderateTextMultiModel } from "@/lib/server/moderation/hf-multi-model";
 import { moderateImageWithHuggingFace } from "@/lib/server/moderation/hf-nsfw-image";
@@ -50,6 +51,10 @@ const AUTO_HIDE_REASONS = new Set([
   "terrorism",
   "human_trafficking",
   "drugs",
+  "spam",
+  "harassment",
+  "hate",
+  "scam",
 ]);
 
 const URL_REGEX = /(https?:\/\/[^\s]+)/gi;
@@ -921,12 +926,80 @@ export async function listModerationState() {
   return store;
 }
 
+/**
+ * Remove auto-generated media quarantine reports and quarantined URLs
+ * that were created by the (now-removed) aggressive remote-media
+ * quarantine on the read path. Only clears "media" reports with status
+ * "open" and reason "other" that contain the auto-generated detail text.
+ */
+export async function clearAutoQuarantineReports() {
+  const store = await loadStore();
+  const before = {
+    reports: store.reports.length,
+    quarantined: store.quarantinedMediaUrls.length,
+  };
+
+  // Remove auto-generated media-quarantine reports
+  store.reports = store.reports.filter(
+    (r) =>
+      !(
+        r.entityType === "media" &&
+        r.status === "open" &&
+        r.reason === "other" &&
+        typeof r.details === "string" &&
+        (r.details.includes("Remote media hidden automatically") ||
+          r.details.includes("Media upload requires manual review"))
+      )
+  );
+
+  // Clear quarantined URLs (keep manually blocked ones)
+  store.quarantinedMediaUrls = [];
+
+  await saveStore(store);
+  return {
+    removedReports: before.reports - store.reports.length,
+    clearedQuarantined: before.quarantined,
+  };
+}
+
 function isRelativeMediaUrl(url: string) {
   return url.startsWith("/");
 }
 
+/**
+ * Known Lens ecosystem / IPFS media hosts. Media from these origins is
+ * served by the Lens protocol infrastructure or trusted gateways and
+ * should not be auto-quarantined on the read path.
+ */
+const TRUSTED_MEDIA_HOSTS = new Set([
+  "ipfs.io",
+  "gateway.pinata.cloud",
+  "cloudflare-ipfs.com",
+  "w3s.link",
+  "dweb.link",
+  "nftstorage.link",
+  "lens.infura-ipfs.io",
+  "arweave.net",
+  "ik.imagekit.io",
+  "storage.googleapis.com",
+  "gw.ipfs-lens.dev",
+  "api.grove.storage",
+]);
+
+function isTrustedMediaHost(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return [...TRUSTED_MEDIA_HOSTS].some(
+      (h) => hostname === h || hostname.endsWith(`.${h}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isCleanMediaUrl(store: PersistedModerationState, url: string) {
   if (isRelativeMediaUrl(url)) return true;
+  if (isTrustedMediaHost(url)) return true;
   if (store.approvedRemoteMediaUrls.includes(url)) return true;
   return store.mediaFingerprints.some(
     (item) => item.url === url && item.status === "clean"
@@ -1030,7 +1103,7 @@ export async function createModerationReport(input: {
   }
 
   const autoAction = AUTO_HIDE_REASONS.has(report.reason)
-    ? (() => {
+    ? await (async () => {
         switch (report.entityType) {
           case "post":
             if (!store.hiddenPostIds.includes(report.entityId)) {
@@ -1066,6 +1139,10 @@ export async function createModerationReport(input: {
             }
             return "block_media";
           case "message":
+            // Redact the offending message content
+            if (report.entityId) {
+              await redactMessageById(report.entityId);
+            }
             if (report.targetAddress) {
               const normalized = normalizeAddress(report.targetAddress);
               if (!store.bannedAddresses.includes(normalized)) {
@@ -1135,6 +1212,7 @@ export async function applyModerationAction(input: {
     | "block_media"
     | "approve_media"
     | "unblock_media"
+    | "redact_message"
     | "reject_report";
   entityId?: string;
   address?: string;
@@ -1193,6 +1271,10 @@ export async function applyModerationAction(input: {
       store.bannedAddresses = removeValue(store.bannedAddresses, address);
       break;
     case "reject_report":
+      break;
+    case "redact_message":
+      if (!entityId) return { ok: false as const, error: "Missing message id" };
+      await redactMessageById(entityId);
       break;
     case "block_media":
       if (!entityId) return { ok: false as const, error: "Missing media url" };
@@ -1300,10 +1382,16 @@ export async function filterVisiblePosts<T extends { id: string; author: { addre
     if (!metadata?.media?.length) return post;
 
     const filteredMedia = metadata.media.filter((url) => {
+      // Always allow media from trusted Lens ecosystem/IPFS hosts, even
+      // if a previous request mistakenly quarantined them.
+      if (isTrustedMediaHost(url)) return true;
       if (hiddenMedia.has(url)) return false;
       if (isCleanMediaUrl(store, url)) return true;
-      quarantines.push({ url, actorAddress: post.author.address });
-      return false;
+      // Remote Lens feed media from unknown hosts is allowed by default.
+      // Only locally-uploaded media goes through quarantine (handled in
+      // the upload endpoint). Auto-quarantining every remote URL floods
+      // the admin queue with false positives.
+      return true;
     });
 
     return {
@@ -1314,16 +1402,6 @@ export async function filterVisiblePosts<T extends { id: string; author: { addre
       },
     };
   });
-
-  if (quarantines.length > 0) {
-    void ensureRemoteMediaBatchInReview(quarantines).catch((error) => {
-      const message = error instanceof Error ? error.message : "unknown remote media review error";
-      logger.warn("moderation.remote_media_batch_review_failed", {
-        error: message,
-        count: quarantines.length,
-      });
-    });
-  }
 
   return filteredPosts;
 }

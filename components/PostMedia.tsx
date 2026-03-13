@@ -22,6 +22,7 @@ export default function PostMedia({ media, settings }: PostMediaProps) {
   const [revealed, setRevealed] = useState(!settings.hideMediaPreviews);
   const isSingle = media.length === 1;
   const singleHeightClass = settings.compactFeed ? "max-h-72" : "max-h-96";
+  const multiHeightClass = settings.compactFeed ? "h-56" : "h-72";
 
   useEffect(() => {
     setRevealed(!settings.hideMediaPreviews);
@@ -48,7 +49,7 @@ export default function PostMedia({ media, settings }: PostMediaProps) {
         const mediaKind = getMediaKind(url);
         const frameClass = isSingle
           ? "mx-auto overflow-hidden rounded-xl border border-gray-700 bg-black"
-          : "overflow-hidden rounded-xl border border-gray-700 bg-black aspect-square";
+          : `overflow-hidden rounded-xl border border-gray-700 bg-black ${multiHeightClass}`;
 
         if (mediaKind === "video") {
           return (
@@ -60,7 +61,7 @@ export default function PostMedia({ media, settings }: PostMediaProps) {
                 muted={settings.autoplayVideos}
                 loop={settings.autoplayVideos}
                 playsInline
-                className={isSingle ? `w-full ${singleHeightClass} object-contain` : "h-full w-full object-cover"}
+                className={isSingle ? `w-full ${singleHeightClass} object-contain` : "h-full w-full object-contain"}
               />
             </div>
           );
@@ -80,8 +81,8 @@ export default function PostMedia({ media, settings }: PostMediaProps) {
                     ? `w-full ${singleHeightClass} object-contain`
                     : "h-full w-full object-contain"
                   : isSingle
-                    ? `w-full ${singleHeightClass} object-cover`
-                    : "h-full w-full object-cover"
+                    ? `w-full ${singleHeightClass} object-contain`
+                    : "h-full w-full object-contain"
               }
             />
           </div>

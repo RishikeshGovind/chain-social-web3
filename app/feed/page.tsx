@@ -85,7 +85,7 @@ type FeedResponse = {
   lensFallbackError?: string;
 };
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 25;
 
 function comparePostsDesc(a: Post, b: Post): number {
   if (a.timestamp === b.timestamp) {
@@ -359,6 +359,18 @@ export default function FeedPage() {
   useEffect(() => {
     void fetchPosts({ reset: true });
   }, [fetchPosts]);
+
+  // Optimistically remove a reported post so the user gets immediate feedback.
+  useEffect(() => {
+    function onReport(e: Event) {
+      const { entityType, entityId } = (e as CustomEvent).detail ?? {};
+      if (entityType === "post" && typeof entityId === "string") {
+        setPosts((prev) => prev.filter((p) => p.id !== entityId));
+      }
+    }
+    window.addEventListener("chainsocial:report", onReport);
+    return () => window.removeEventListener("chainsocial:report", onReport);
+  }, []);
 
   useEffect(() => {
     const anchor = loadMoreAnchorRef.current;

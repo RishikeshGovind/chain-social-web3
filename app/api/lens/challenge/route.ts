@@ -14,7 +14,7 @@ type ChallengeResponse = {
 export async function POST(req: Request) {
   try {
     const { address } = await req.json();
-    if (typeof address !== "string") {
+    if (typeof address !== "string" || !/^0x[a-fA-F0-9]{40}$/.test(address.trim())) {
       return NextResponse.json({ error: "Invalid address payload" }, { status: 400 });
     }
 

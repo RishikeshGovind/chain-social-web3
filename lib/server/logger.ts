@@ -19,11 +19,19 @@ function serializeError(error: unknown) {
   return error;
 }
 
+const SENSITIVE_KEY_PATTERNS = /token|secret|password|authorization|jwt|key|credential|apikey|api_key|access_token|refresh_token/i;
+
 function normalizeMeta(meta: LogMeta) {
   if (!meta) return undefined;
   const normalized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(meta)) {
-    normalized[key] = key.toLowerCase().includes("error") ? serializeError(value) : value;
+    if (SENSITIVE_KEY_PATTERNS.test(key)) {
+      normalized[key] = "[REDACTED]";
+    } else if (key.toLowerCase().includes("error")) {
+      normalized[key] = serializeError(value);
+    } else {
+      normalized[key] = value;
+    }
   }
   return normalized;
 }
