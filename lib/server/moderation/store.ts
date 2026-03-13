@@ -1006,54 +1006,6 @@ function isCleanMediaUrl(store: PersistedModerationState, url: string) {
   );
 }
 
-async function ensureRemoteMediaBatchInReview(items: Array<{ url: string; actorAddress: string }>) {
-  if (items.length === 0) return;
-
-  const store = await loadStore();
-  const now = new Date().toISOString();
-  let changed = false;
-
-  for (const item of items) {
-    if (
-      isRelativeMediaUrl(item.url) ||
-      store.blockedMediaUrls.includes(item.url) ||
-      store.quarantinedMediaUrls.includes(item.url) ||
-      isCleanMediaUrl(store, item.url)
-    ) {
-      continue;
-    }
-
-    store.quarantinedMediaUrls.unshift(item.url);
-    changed = true;
-
-    const existingReport = store.reports.find(
-      (report) =>
-        report.entityType === "media" &&
-        report.entityId === item.url &&
-        report.status === "open"
-    );
-    if (!existingReport) {
-      store.reports.unshift({
-        id: crypto.randomUUID(),
-        reporterAddress: normalizeAddress(item.actorAddress),
-        entityType: "media",
-        entityId: item.url,
-        targetAddress: normalizeAddress(item.actorAddress),
-        reason: "other",
-        details: "Remote media hidden automatically until a moderator approves it.",
-        status: "open",
-        createdAt: now,
-        updatedAt: now,
-      });
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    await saveStore(store);
-  }
-}
-
 export async function createModerationReport(input: {
   reporterAddress: string;
   entityType: ModerationEntityType;
@@ -1376,7 +1328,6 @@ export async function filterVisiblePosts<T extends { id: string; author: { addre
     (post) => !hiddenPosts.has(post.id) && !hiddenProfiles.has(normalizeAddress(post.author.address))
   );
 
-  const quarantines: Array<{ url: string; actorAddress: string }> = [];
   const filteredPosts = visiblePosts.map((post) => {
     const metadata = (post as { metadata?: { media?: string[] } }).metadata;
     if (!metadata?.media?.length) return post;
