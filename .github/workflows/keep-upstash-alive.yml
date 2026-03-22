@@ -1,0 +1,19 @@
+name: Keep Upstash Redis Alive
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # Runs every day at 03:00 UTC
+  workflow_dispatch:
+
+jobs:
+  ping-upstash:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl ping to Upstash Redis
+        env:
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          curl -s -X POST "$UPSTASH_REDIS_REST_URL/GET/ping" \
+            -H "Authorization: Bearer $UPSTASH_REDIS_REST_TOKEN" \
+            -H "Content-Type: application/json"
